@@ -13,6 +13,8 @@
 #include <Time.h>
 #include <Wire.h>
 #include "MovingAvg.h"
+#include "Adafruit_VL53L1X.h"
+
 #include "logto.h"
 
 extern AsyncWebServer server;
@@ -55,13 +57,14 @@ typedef enum {
 } State;
 
 typedef enum {
-    NS, // North-South
-    EW,  // East-West
+    N, S, E, W, 
     nulldir
 } Direction;
 
 // triggers represent the photresistors in the track and their associated GPIOs for ESP32 ADCs
 struct Trigger {
+    Direction trackDir; // is this on a N/S track or E/W?
+    Direction location; // e.g, located at W end of E/W track
     bool active;
     int initVal;
     int curVal;
@@ -69,21 +72,17 @@ struct Trigger {
     int GPIO;
     int trigLevel; // threshold for triggering; defaults to TRIGLEVEL
 
-    Trigger(bool active, int initVal, int curVal, int avgSize, int gpio, bool wasTriggered)
-        : active(active), initVal(initVal), curVal(curVal), avgVal(avgSize), GPIO(gpio), trigLevel(TRIGLEVEL) {}
+    Trigger(Direction trackDir, Direction location, bool active, int initVal, int curVal, int avgSize, int gpio, bool wasTriggered)
+        : trackDir(trackDir), location(location), active(active), initVal(initVal), curVal(curVal), avgVal(avgSize), GPIO(gpio), trigLevel(TRIGLEVEL) {}
 };
 
 typedef struct {
-    Direction dir;           // Direction (NS or EW)
+    Direction dir;           // Direction
     State state;         // Current state information
-    struct Trigger* triggers;  // Pointer to an array of triggers
-    int numTriggers;         // Number of triggers in the array
 } DirectionState;
 
-extern struct Trigger nsTriggers[];
-extern struct Trigger ewTriggers[];
-extern int nsTrigSize;
-extern int ewTrigSize;
+extern struct Trigger triggers[];
+extern int trigSize;
 
 // wifi/web functions
 bool initWiFi();

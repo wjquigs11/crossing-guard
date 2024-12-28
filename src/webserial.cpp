@@ -136,10 +136,8 @@ void WebSerialonMessage(uint8_t *data, size_t len) {
         String threshS = words[i];
         int thresh = atoi(threshS.c_str());
         logTo::logToAll("setting light threshold to " + threshS + "%");
-        for (j=0; j < nsTrigSize; j++)
-          setTrigger(&nsTriggers[j], thresh);
-        for (j=0; j < ewTrigSize; j++)
-          setTrigger(&ewTriggers[j], thresh);
+        for (j=0; j < trigSize; j++)
+          setTrigger(&triggers[j], thresh);
       }
 #if 0
         String sensorS = words[i];

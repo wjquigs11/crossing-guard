@@ -5,8 +5,20 @@
 
 #include "include.h"
 
+// using TOF sensor for NS 0 trigger (instead of photoresistor)
+// although IR sensor would be better, but multiple require I2C hub
+// https://www.adafruit.com/product/6064
+// https://www.adafruit.com/product/5626
 #define SDA 15
 #define SCL 25
+#define IRQ_PIN 2
+#define XSHUT_PIN 3
+
+Adafruit_VL53L1X vl53 = Adafruit_VL53L1X(XSHUT_PIN, IRQ_PIN);
+int tof;
+#define STARTTRIG 0 // if STARTTRIG == 0, use photoresistors
+                    // else skip trigger 0 to test TOF/IR sensor
+
 
 File consLog;
 using namespace reactesp;
@@ -18,18 +30,12 @@ bool teleplot = false;
 bool stopInner = false;
 bool stopOuter = false;
 
-// photoresistors in the north/south direction
-struct Trigger nsTriggers[] = {
-    {false, 0, 0, MOVINGAVG, 36, TRIGLEVEL},  // Trigger 1
-    {false, 0, 0, MOVINGAVG, 35, TRIGLEVEL}   // Trigger 4
-};
-
-// photoresistors in the east/west direction
-// 2 and 3 are both on the west side because I need to cover both branches of turnout right next to crossing
-struct Trigger ewTriggers[] = {
-    {false, 0, 0, MOVINGAVG, 39, TRIGLEVEL},  // Trigger 2
-    {false, 0, 0, MOVINGAVG, 34, TRIGLEVEL},  // Trigger 3
-    {false, 0, 0, MOVINGAVG, 32, TRIGLEVEL}   // Trigger 5
+struct Trigger triggers[] = {
+  {N, S, false, 0, 0, MOVINGAVG, 36, TRIGLEVEL},  // 0 is a north/south trigger on the south side of the junction
+  {E, W, false, 0, 0, MOVINGAVG, 39, TRIGLEVEL},  // 1 
+  {E, W, false, 0, 0, MOVINGAVG, 34, TRIGLEVEL},  // 2
+  {N, N, false, 0, 0, MOVINGAVG, 35, TRIGLEVEL},  // 3
+  {E, E, false, 0, 0, MOVINGAVG, 32, TRIGLEVEL}   // 4
 };
 
 // last time *any* sensor was triggered
@@ -40,11 +46,10 @@ unsigned long lastTrigTime;
 // total light level measured across all sensors
 int totalLight, newTotalLight;
 
-int nsTrigSize = sizeof(nsTriggers) / sizeof(nsTriggers[0]);
-int ewTrigSize = sizeof(ewTriggers) / sizeof(ewTriggers[0]);
+int trigSize = sizeof(triggers) / sizeof(triggers[0]);
 
-DirectionState nsState = {NS, Y, nsTriggers, nsTrigSize};
-DirectionState ewState = {EW, Y, ewTriggers, ewTrigSize};
+DirectionState nsState = {N, Y};
+DirectionState ewState = {E, Y};
 
 #define NUM_SIGS 4  // 4 signals on the diamond crossing
 #define NUM_LEDS 3  // each signal has 3 LEDs
@@ -73,7 +78,7 @@ void setLED(Direction direction, State state) {
     }
     Serial.println();
   } else
-  if (direction == NS) {
+  if (direction == N || direction == S) {
     // NS yellow then green, EW red
     for (sig=0; sig<2; sig++) {
       gpio_set_level((gpio_num_t)signals[sig][0], 1);
@@ -91,7 +96,7 @@ void setLED(Direction direction, State state) {
       gpio_set_level((gpio_num_t)signals[sig][1], 1);
       gpio_set_level((gpio_num_t)signals[sig][2], 1);           
     }        
-  } else { // direction == EW
+  } else { // direction == E or W
     for (sig=0; sig<2; sig++) {
       gpio_set_level((gpio_num_t)signals[sig][0], 1);
       gpio_set_level((gpio_num_t)signals[sig][1], 1);
@@ -118,49 +123,45 @@ String printState(State S) {
   return("unknown");
 }
 
+String printDirection(Direction D) {
+  if (D == N) return("N");
+  if (D == S) return("S");
+  if (D == E) return("E");
+  if (D == W) return("W");
+  return ("unknown");
+}
+
 void calibrateLight(int cycles) {
   int i, j;
   totalLight = 0;
   logTo::logToAll("Starting light measurement...");
   for (i=0; i < cycles; i++) {
-    for (j = 0; j < nsTrigSize; j++) {
-      nsTriggers[j].initVal += analogRead(nsTriggers[j].GPIO);
-      nsTriggers[j].avgVal.begin();
-    }
-    for (j = 0; j < ewTrigSize; j++) {
-      ewTriggers[j].initVal += analogRead(ewTriggers[j].GPIO);
-      ewTriggers[j].avgVal.begin();
+    for (j=0; j < trigSize; j++) {
+      triggers[j].initVal += analogRead(triggers[j].GPIO);
+      triggers[j].avgVal.begin();      
     }
     delay(10);
   }
   logTo::logToAll("Startup done, light measurements:");
   // average initial readings
-  for (i = 0; i < nsTrigSize; i++) {
-    nsTriggers[i].initVal /= cycles;
-    logTo::logToAll("NS" + String(i) = ": " + String(nsTriggers[i].initVal));
-    totalLight += nsTriggers[i].initVal;
+  for (i = 0; i < trigSize; i++) {
+    triggers[i].initVal /= cycles;
+    logTo::logToAll(String(i) + ": dir " + printDirection(triggers[i].trackDir) + ", " + String(triggers[i].initVal) + " gpio:" + String(triggers[i].GPIO) + " loc: " + printDirection(triggers[i].location));
+    totalLight += triggers[i].initVal;
   }
-  for (i = 0; i < ewTrigSize; i++) {
-    ewTriggers[i].initVal /= cycles;
-    logTo::logToAll("EW" + String(i) + ": " + String(ewTriggers[i].initVal));
-    totalLight += ewTriggers[i].initVal;
-  }
+
   logTo::logToAll("total light level: " + String(totalLight));
 }
 
 void showLight() {
   int i;
   newTotalLight = 0;
-  for (i = 0; i < nsTrigSize; i++) {
-    logTo::logToAll("NS" + String(i) + " curr: " + String(nsTriggers[i].curVal) + " init: " + String(nsTriggers[i].initVal)
-      + " ratio: " + String((float)nsTriggers[i].curVal/nsTriggers[i].initVal*100, 2) + "% thresh: " + nsTriggers[i].trigLevel);
-    newTotalLight += nsTriggers[i].curVal;
+  logTo::logToAll("tof=" + String(tof));
+  for (i = 0; i < trigSize; i++) {
+    logTo::logToAll(String(i) + " curr: " + String(triggers[i].curVal) + " init: " + String(triggers[i].initVal)
+      + " ratio: " + String((float)triggers[i].curVal/triggers[i].initVal*100, 2) + "% thresh: " + triggers[i].trigLevel);
+    newTotalLight += triggers[i].curVal;
   }
-  for (i = 0; i < ewTrigSize; i++) {
-    logTo::logToAll("EW" + String(i) + " curr: " + String(ewTriggers[i].curVal) + " init: " + String(ewTriggers[i].initVal)  
-      + " ratio: " + String((float)ewTriggers[i].curVal/ewTriggers[i].initVal*100, 2) + "% thresh: " + ewTriggers[i].trigLevel);
-    newTotalLight += ewTriggers[i].curVal;
-  } 
   logTo::logToAll("total light level (old/new): " + String(totalLight) + "/" + String(newTotalLight));
 }
 
@@ -174,6 +175,26 @@ volatile bool buttonPressed = false;
 
 void IRAM_ATTR buttonISR() {
     buttonPressed = true;
+}
+
+int checkTOF() {
+  int distance;
+  if (vl53.dataReady()) {
+    // new measurement for the taking!
+    distance = vl53.distance();
+    if (distance == -1) {
+      // something went wrong!
+      //logTo::logToAll("Couldn't get distance: " + String(vl53.vl_status));
+      Serial.printf("Couldn't get distance: %d\n",vl53.vl_status);
+      return -1;
+    }
+    Serial.print(F("Distance: "));
+    Serial.println(distance);
+    // data is read out, time for another reading!
+    vl53.clearInterrupt();
+    return distance;
+  }
+  return -2;
 }
 
 void setup() {
@@ -277,35 +298,63 @@ void setup() {
   // measure ambient light on photoresistors
   calibrateLight(LIGHT_CYCLES);
 
+  // initialize TOF sensor
+  Wire.begin(SDA,SCL);
+  if (! vl53.begin(0x29, &Wire)) {
+    logTo::logToAll("Error on init of VL sensor: " + String(vl53.vl_status));
+  }
+  logTo::logToAll("VL53L1X sensor OK!");
+
+  logTo::logToAll("Sensor ID: 0x" + String(vl53.sensorID(), HEX));
+
+  if (! vl53.startRanging()) {
+    logTo::logToAll("Couldn't start ranging: " + String(vl53.vl_status));
+  }
+  logTo::logToAll("Ranging started");
+
+  // Valid timing budgets: 15, 20, 33, 50, 100, 200 and 500ms!
+  vl53.setTimingBudget(50);
+  logTo::logToAll("Timing budget (ms): " + String(vl53.getTimingBudget()));
+
+  /*
+  vl.VL53L1X_SetDistanceThreshold(100, 300, 3, 1);
+  vl.VL53L1X_SetInterruptPolarity(0);
+  */
+
+  // here's where the magic happens...determine if any sensors have triggered and set signals
   app.onRepeat(LOOPDELAY, []() {
     int i, analogValue, triggerValue;
     float trigRatio;
     unsigned long cTime = millis();
 
-    // first check to see if any sensors have triggered in either direction
     bool nsTriggerHigh = false;
-    for (i = 0; i < nsTrigSize; i++) {
-      cTime = millis();
-      nsTriggers[i].curVal = analogRead(nsTriggers[i].GPIO);
-      analogValue = nsTriggers[i].avgVal.reading(nsTriggers[i].curVal);
-      if (teleplot)
-        Serial.printf(">NStrig%d:%d\n",i,analogValue);
-      trigRatio = (analogValue/(float)nsTriggers[i].initVal)*100;
-      if (trigRatio < nsTriggers[i].trigLevel) {
+    bool ewTriggerHigh = false;
+    // first check to see if any sensors have triggered in either direction
+    if (STARTTRIG > 0) {
+      if (int x = checkTOF() >=0) // sometimes it can't read state don't know why
+        tof = x;
+      if (tof > -1 && tof < 100) {  // arbitrary value right now
         nsTriggerHigh = true;
-        lastTrigTime = cTime;
+        logTo::logToAll("tof trigger " + String(tof));
+        if (teleplot)
+          Serial.printf(">tof:%d\n", tof);
       }
     }
-    bool ewTriggerHigh = false;
-    for (i = 0; i < ewTrigSize; i++) {
+    for (i = STARTTRIG; i < trigSize; i++) {
       cTime = millis();
-      ewTriggers[i].curVal = analogRead(ewTriggers[i].GPIO);
-      analogValue = ewTriggers[i].avgVal.reading(ewTriggers[i].curVal);
+      triggers[i].curVal = analogRead(triggers[i].GPIO);
+      analogValue = triggers[i].avgVal.reading(triggers[i].curVal);
       if (teleplot)
-        Serial.printf(">EWtrig%d:%d\n",i,analogValue);
-      trigRatio = (analogValue/(float)ewTriggers[i].initVal)*100;
-      if (trigRatio < nsTriggers[i].trigLevel) {
-        ewTriggerHigh = true;
+        Serial.printf(">trig%d:%d\n",i,analogValue);
+      trigRatio = (analogValue/(float)triggers[i].initVal)*100;
+      if (trigRatio < triggers[i].trigLevel) {
+        //logTo::logToAll("sensor " + String(i) + " dir: " + printDirection(triggers[i].trackDir));
+        if (triggers[i].trackDir == N || triggers[i].trackDir == S) {
+          nsTriggerHigh = true;
+        }
+        if (triggers[i].trackDir == E || triggers[i].trackDir == W) {
+          ewTriggerHigh = true;
+        }
         lastTrigTime = cTime;
       }
     }
@@ -313,11 +362,11 @@ void setup() {
       if (nsState.state == Y) { // state change
         logTo::logToAll("NS sensor triggered on Y go to green " + String(cTime/1000));
         showLight();
-        nsState.state = G;  // TBD change to function setState(statename, state) to turn on/off LEDs
+        nsState.state = G;
         ewState.state = R;
-        setLED(NS, G);
-      // my state is red and there's still a train on the other block
-      } else {
+        setLED(N, G);
+        setLED(S, G);
+      } else { // my state is red and there's still a train on the other block
         //logTo::logToAll("NS trigger high and state (ns/ew): " + printState(nsState.state) + "/" + printState(ewState.state));
         if (nsState.state == R)
           if (ewTriggerHigh) {
@@ -330,8 +379,10 @@ void setup() {
             showLight();
             nsState.state = Y;
             ewState.state = R;
-            setLED(NS,Y); // not working yet because I ignore combo of direction and state, will have to change all the others
-            setLED(EW,R);
+            setLED(N,Y);
+            setLED(S,Y);
+            setLED(E,R);
+            setLED(W,R);
             delay(CLEARDELAY*500);
             digitalWrite(RELAYIN, LOW);
           }
@@ -343,7 +394,8 @@ void setup() {
         showLight();
         ewState.state = G;
         nsState.state = R;
-        setLED(EW, G);
+        setLED(E,G);
+        setLED(W,G);
       // if my state was set to R and I'm triggering, I can go if the other direction ISN'T triggered
       } else {
         //logTo::logToAll("EW trigger high and state (ns/ew): " + printState(nsState.state) + "/" + printState(ewState.state));
@@ -358,8 +410,10 @@ void setup() {
             showLight();
             nsState.state = R;
             ewState.state = Y;
-            setLED(EW,Y); 
-            setLED(NS,R);
+            setLED(E,Y); 
+            setLED(W,Y); 
+            setLED(N,R);
+            setLED(S,R);
             delay(CLEARDELAY*500);
             digitalWrite(RELAYOUT, LOW);
           }
@@ -368,8 +422,7 @@ void setup() {
     // no triggers high so set all back to yellow
     // wait CLEARDELAY seconds since last trigger before clearing
     if (!nsTriggerHigh && !ewTriggerHigh) {  
-      //logTo::logToAll(printState(nsState.state));
-      //logTo::logToAll(printState(ewState.state));
+      //logTo::logToAll("NS=" + printState(nsState.state) + " EW=" + printState(ewState.state));
       if (nsState.state != Y && ewState.state != Y) {
         if ((cTime - lastTrigTime) > CLEARDELAY*1000) {
           logTo::logToAll("no triggers go to Y, last trigger delta: " + String(lastTrigTime/1000) + " " + String(cTime/1000));
