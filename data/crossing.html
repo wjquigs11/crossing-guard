@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Crossing Guard</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css">
+    <link rel="icon" type="image/png" href="favicon.ico">
+    <link rel="stylesheet" type="text/css" href="style.css">
+</head>
+<body>
+    <div class="content">
+        <div class="card" id="card">
+            <div class="lines-container">
+                <img id="N" src="yellow-sig.png" alt="Dot" class="corner top">
+                <img id="S" src="yellow-sig.png" alt="Dot" class="corner bottom">
+                <img id="E" src="yellow-sig.png" alt="Dot" class="corner right">
+                <img id="W" src="yellow-sig.png" alt="Dot" class="corner left">
+            </div>
+        </div>
+        <form action="/params" method="post">
+            <p>North/South Loco ID: <input type="text" name="northsouthloco" value="%NSLOCO%" size="6"</p>
+            <p>East/West Loco ID: <input type="text" name="eastwestloco" value="%EWLOCO%" size="6"></p>
+            <p>(Use 0 for DC/solenoid)</p>
+            <p>DCC-EX hostname: <input type="text" name="dcc-ex-host" value="%DCCHOST%" size="6"></p>
+            <button type="submit">Confirm</button>
+          </form>
+    </div>
+    <script src="main-script.js"></script>
+</body>
+</html>

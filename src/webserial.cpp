@@ -7,17 +7,16 @@ bool logToSerial = true;
 bool debugNMEA = false;
 
 void logTo::logToAll(String s) {
+  if (s.endsWith("\n")) s.remove(s.length() - 1);
   if (logToSerial) {
-    if (s.endsWith("\n")) s.remove(s.length() - 1);
-    //String t = "[" + String(millis() / 1000) + "]: ";
     Serial.println(s);
     //consLog.println(s);
-    if (serverStarted) {
-      WebSerial.print(s);
-      //WebSerial.flush();
-    }
-    s = String();
   }
+  if (serverStarted) {
+    WebSerial.print(s);
+    //WebSerial.flush();
+  }
+  s = String();
 }
 
 String formatMacAddress(const String& macAddress) {
@@ -38,9 +37,9 @@ String commandList[] = {"?", "format", "restart", "ls", "scan", "hostname", "sta
 String words[10]; // Assuming a maximum of 10 words
 
 void WebSerialonMessage(uint8_t *data, size_t len) {
-  Serial.printf("Received %lu bytes from WebSerial: ", len);
-  Serial.write(data, len);
-  Serial.println();
+  //Serial.printf("Received %lu bytes from WebSerial: ", len);
+  //Serial.write(data, len);
+  //Serial.println();
   //WebSerial.print("Received: ");
   String dataS = String((char*)data);
   // Split the String into an array of Strings using spaces as delimiters
@@ -137,7 +136,7 @@ void WebSerialonMessage(uint8_t *data, size_t len) {
         int thresh = atoi(threshS.c_str());
         logTo::logToAll("setting light threshold to " + threshS + "%");
         for (j=0; j < trigSize; j++)
-          setTrigger(&triggers[j], thresh);
+          setTrigger(&sensors[j], thresh);
       }
 #if 0
         String sensorS = words[i];
@@ -151,7 +150,7 @@ void WebSerialonMessage(uint8_t *data, size_t len) {
 #endif
       return;
     }
-    if (words[i].startsWith("stop")) {
+    if (words[i].startsWith("stop")) {  // TBD change to DCC-EX
       if (!words[++i].isEmpty()) {
         if (words[i].startsWith("i")) {
           logTo::logToAll("stopping inner loop");
@@ -194,7 +193,61 @@ void WebSerialonMessage(uint8_t *data, size_t len) {
       calibrateLight(LIGHT_CYCLES);
       return;
     }
-
+    if (words[i].startsWith("state")) {
+      printSigState();
+      return;
+    }
+    if (words[i].startsWith("<")) {
+      // echo "<>" commands to DCC-EX command station (entire string not just words[])
+      WebSerial.print(dataS);
+      Serial.println((char*)data);
+      return;
+    }
+    if (words[i].startsWith("speed")) {
+      if (!words[++i].isEmpty()) {
+        int loco = atoi(words[i].c_str());
+        getSpeed(loco);
+      }
+      return;
+    }
+    if (words[i].startsWith("brake")) {
+       if (!words[++i].isEmpty()) {
+        int loco = atoi(words[i].c_str());
+        brake(loco);
+      }   
+      return;
+    }
+    if (words[i].startsWith("resume")) {
+      if (!words[++i].isEmpty()) {
+        int loco = atoi(words[i].c_str());
+        resume(loco);
+      }    
+      return;
+    }
+    if (words[i].startsWith("loco")) {
+      if (!words[++i].isEmpty()) {
+        if (words[i].startsWith("ns")) {
+          if (!words[++i].isEmpty()) {
+            NSlocoID = atoi(words[i].c_str());
+            preferences.putInt("NSlocoID", NSlocoID);
+          }
+        } else if (words[i].startsWith("ew")) {
+          if (!words[++i].isEmpty()) {
+            EWlocoID = atoi(words[i].c_str());
+            preferences.putInt("NSlocoID", EWlocoID);
+          }
+        }
+        for (int sig=0; sig<NUM_SIGS; sig++) {
+          if (signals[sig].location == N || signals[sig].location == S)
+            signals[sig].loco = NSlocoID;
+          else
+            signals[sig].loco = EWlocoID;
+        }
+      }
+      logTo::logToAll("NSloco: " + String(NSlocoID));
+      logTo::logToAll("EWloco: " + String(EWlocoID));
+      return;
+    }
     logTo::logToAll("Unknown command: " + words[i]);
   }
   for (int i=0; i<wordCount; i++) words[i] = String();

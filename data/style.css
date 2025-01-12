@@ -31,10 +31,14 @@ body {
   grid-gap: 2rem; 
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
 }
+
 .card { 
   background-color: white; 
   box-shadow: 2px 2px 12px 1px rgba(140,140,140,.5);
+  padding: 20px;
+  position: relative;
 }
+
 .card-title { 
   font-size: 1.2rem;
   font-weight: bold;
@@ -76,3 +80,43 @@ body {
   margin: 0.25em;
 }
 
+.lines-container {
+  position: relative;
+  width: 80%;
+  height: 80vmin;
+  max-height: 600px;
+  margin: 0 auto;
+  background-image: url('crossing.jpg');
+  background-size: 40%;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+.corner {
+  position: absolute;
+  width: 20%;
+  height: 20%;
+  object-fit: contain;
+}
+.top {
+  top: 15%;
+  left: 50%;
+  transform: translateX(-50%);
+}
+.bottom {
+  bottom: 15%;
+  left: 50%;
+  transform: translateX(-50%);
+}
+.left {
+  left: 15%;
+  top: 50%;
+  transform: translateY(-50%);
+}
+.right {
+  right: 15%;
+  top: 50%;
+  transform: translateY(-50%);
+}
+.freq {
+  margin-bottom: 20px;
+}

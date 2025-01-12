@@ -10,37 +10,60 @@ using namespace reactesp;
 extern ReactESP app;
 
 String getSensorReadings() {
-  readings["boatHeading"] = "180"; //String(pBD->TrueHeading,0);
   String jsonString;
   serializeJson(readings,jsonString); // returns an int?
   return jsonString;
 }
 
 String processor(const String& var) {
-  Serial.println(var);
-  if(var == "TIMERDELAY") {
-    return String(WebTimerDelay);
+  logTo::logToAll("processor: " + var);
+  if (var == "NSLOCO") {
+    return String(NSlocoID);
+  }
+  if (var == "EWLOCO") {
+    return String(EWlocoID);
+  }
+  if (var == "DCCHOST") {
+    return DCCEXhostname;
   }
   return String();
 }
+
+int proxTrig;  // temp
 
 void startWebServer() {
   logTo::logToAll("starting web server");
 
   // start serving from SPIFFS
   server.serveStatic("/", SPIFFS, "/").setDefaultFile("index.html");
-  server.serveStatic("/", SPIFFS, "/");
+  //server.serveStatic("/", SPIFFS, "/");
 
   server.on("/", HTTP_GET, [](AsyncWebServerRequest * request) {
     logTo::logToAll("index.html");
     request->send(SPIFFS, "/index.html", "text/html", false, processor);
   });
 
+  server.on("/crossing", HTTP_GET, [](AsyncWebServerRequest * request) {
+    logTo::logToAll("crossing.html");
+    request->send(SPIFFS, "/crossing.html", "text/html", false, processor);
+  });
+
+  server.on("/sensor", HTTP_GET, [](AsyncWebServerRequest * request) {
+    logTo::logToAll("sensor.html");
+    if (request->hasParam("prox")) {
+      String prox = request->getParam("prox")->value();
+      proxTrig = atoi(prox.c_str());
+      logTo::logToAll("proximity sensor " + prox);
+      prox = String();
+    }
+    request->send(200, "text/plain", "prox");
+  });
+
   // Request latest sensor readings
   server.on("/readings", HTTP_GET, [](AsyncWebServerRequest *request) {
     //logToAll("getSensorReadings\n");
     String json = getSensorReadings();
-    //logToAll(readings);
+    logTo::logToAll("readings: " + json);
     request->send(200, "application/json", json);
     json = String();
   });
@@ -76,6 +99,33 @@ void startWebServer() {
     request->send(200, "text/plain", response.c_str());
     response = String();
   }); 
+
+  // POST on params
+  server.on("/params", HTTP_POST, [](AsyncWebServerRequest *request) {
+    int params = request->params();
+    for(int i=0;i<params;i++) {
+      const AsyncWebParameter* p = request->getParam(i);
+      if(p->isPost()) {
+        // HTTP POST ssid value
+        logTo::logToAll("params POST " + p->name() + " " + p->value());
+        if (p->name() == "northsouthloco") {
+          NSlocoID = atoi(p->value().c_str());
+          preferences.putInt("NSlocoID", NSlocoID);
+        }
+        if (p->name() == "eastwestloco") {
+          EWlocoID = atoi(p->value().c_str());
+          preferences.putInt("EWlocoID", EWlocoID);
+        }
+        if (p->name() == "dcc-ex-host") {
+          DCCEXhostname = p->value();
+          preferences.putString("DCC-EX", DCCEXhostname);
+        }
+      } // isPost
+    } // for params
+    //request->send(SPIFFS, "/index.html", "text/html");
+    request->redirect("/");  // Redirect to root/index
+  });
+
 
   events.onConnect([](AsyncEventSourceClient *client){
     if(client->lastId()){
