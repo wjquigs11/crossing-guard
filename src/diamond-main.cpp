@@ -16,6 +16,7 @@
 
 Adafruit_VL53L1X vl53 = Adafruit_VL53L1X(XSHUT_PIN, IRQ_PIN);
 int tof;
+movingAvg avgTOF(10); 
 #define STARTTRIG 0 // if STARTTRIG == 0, use photoresistors
                     // else skip trigger 0 to test TOF/IR sensor
 
@@ -51,32 +52,38 @@ int trigSize = sizeof(triggers) / sizeof(triggers[0]);
 DirectionState nsState = {N, Y};
 DirectionState ewState = {E, Y};
 
-#define NUM_SIGS 4  // 4 signals on the diamond crossing
-#define NUM_LEDS 3  // each signal has 3 LEDs
-
+#if 0
 // GPIOs for each signal green/yellow/red
 int signals[NUM_SIGS][NUM_LEDS] = 
-   {{23, 22, 21},  // north/south
-    {19, 18, 5},
-    {17, 16, 4},    // east/west
-    {14, 12, 13}};
+   {{23, 22, 21}, N, N},  // north/north
+    {19, 18, 5}, N, S},   // north/south
+    {17, 16, 4}, E, E},   // east/east
+    {14, 12, 13}, E, W}}; // east/west
+#else
+LED signals[NUM_SIGS] = {
+    {{23, 22, 21}, N},
+    {{19, 18, 5}, S},
+    {{17, 16, 4}, E},
+    {{14, 12, 13}, W}
+};
+#endif
 
 void setTrigger(Trigger *trigger, int trigLevel) {
   trigger->trigLevel = trigLevel;
 }
 
+#if 0
 // TBD: I should track which trigger changed and set the opposite light to red so traffic can't come in both directions
 // which would never happen in DC but could happen in DCC
 void setLED(Direction direction, State state) {
   int sig, led;
-  if (state == Y) {
+  if (direction == nulldir && state == Y) {
     // set all to yellow, direction doesn't matter
     for (sig=0; sig<NUM_SIGS; sig++) {
-      gpio_set_level((gpio_num_t)signals[sig][0], 1); // G
+      gpio_set_level((gpio_num_t)signals[sig].GPIO[0], 1); // G
       gpio_set_level((gpio_num_t)signals[sig][1], 0); // Y (0)
       gpio_set_level((gpio_num_t)signals[sig][2], 1); // R
     }
-    Serial.println();
   } else
   if (direction == N || direction == S) {
     // NS yellow then green, EW red
@@ -90,7 +97,7 @@ void setLED(Direction direction, State state) {
       gpio_set_level((gpio_num_t)signals[sig][1], 1);
       gpio_set_level((gpio_num_t)signals[sig][2], 0);           
     }
-    delay(50);
+    delay(500);
     for (sig=0; sig<2; sig++) {
       gpio_set_level((gpio_num_t)signals[sig][0], 0);
       gpio_set_level((gpio_num_t)signals[sig][1], 1);
@@ -107,7 +114,7 @@ void setLED(Direction direction, State state) {
       gpio_set_level((gpio_num_t)signals[sig][1], 0);
       gpio_set_level((gpio_num_t)signals[sig][2], 1);           
     }
-    delay(50);
+    delay(500);
     for (sig=2; sig<NUM_SIGS; sig++) {
       gpio_set_level((gpio_num_t)signals[sig][0], 0);
       gpio_set_level((gpio_num_t)signals[sig][1], 1);
@@ -115,6 +122,40 @@ void setLED(Direction direction, State state) {
     }    
   }
 }
+#else
+void setLED(Direction location, State state) {
+  int sig, led;
+  if (location == nulldir && state == Y) {
+    // set all to yellow, direction doesn't matter
+    for (sig=0; sig<NUM_SIGS; sig++) {
+      gpio_set_level((gpio_num_t)signals[sig].GPIO[0], 1); // G
+      gpio_set_level((gpio_num_t)signals[sig].GPIO[1], 0); // Y
+      gpio_set_level((gpio_num_t)signals[sig].GPIO[2], 1); // R
+    }
+  } else {
+    // TBD: maybe iterate over state instead of signals so if state=G I can turn all OTHER signals to red
+    for (sig = 0; sig<NUM_SIGS; sig++) {
+      if (signals[sig].location == location) {
+        if (state == Y) {
+          gpio_set_level((gpio_num_t)signals[sig].GPIO[0], 1); // G
+          gpio_set_level((gpio_num_t)signals[sig].GPIO[1], 0); // Y
+          gpio_set_level((gpio_num_t)signals[sig].GPIO[2], 1); // R
+        } else if (state == G) {
+          gpio_set_level((gpio_num_t)signals[sig].GPIO[0], 0); // G
+          gpio_set_level((gpio_num_t)signals[sig].GPIO[1], 1); // Y
+          gpio_set_level((gpio_num_t)signals[sig].GPIO[2], 1); // R
+        } else if (state == R) {
+          gpio_set_level((gpio_num_t)signals[sig].GPIO[0], 1); // G
+          gpio_set_level((gpio_num_t)signals[sig].GPIO[1], 1); // Y
+          gpio_set_level((gpio_num_t)signals[sig].GPIO[2], 0); // R
+        } else {
+          logTo::logToAll("setLED error invalid location/state");
+        } //error
+      }
+    }
+  }
+}
+#endif
 
 String printState(State S) {
   if (S == Y) return("Y");
@@ -178,21 +219,25 @@ void IRAM_ATTR buttonISR() {
 }
 
 int checkTOF() {
-  int distance;
+  uint16_t distance;
+  VL53L1X_ERROR vl_status;
+  uint8_t rangeStatus;
   if (vl53.dataReady()) {
-    // new measurement for the taking!
-    distance = vl53.distance();
-    if (distance == -1) {
-      // something went wrong!
-      //logTo::logToAll("Couldn't get distance: " + String(vl53.vl_status));
-      Serial.printf("Couldn't get distance: %d\n",vl53.vl_status);
+    // new measurement for the taking
+    vl_status = vl53.VL53L1X_GetRangeStatus(&rangeStatus);
+    if ((vl_status != VL53L1X_ERROR_NONE) || (rangeStatus != 0x0)) {
+      Serial.printf("range status error 0x%x vl_status 0x%x\n", rangeStatus, vl_status);
+      return -1;
+    }
+    vl_status = vl53.VL53L1X_GetDistance(&distance);
+    if (vl_status != VL53L1X_ERROR_NONE) {
+      Serial.printf("distance error 0x%x\n", vl_status);
       return -1;
     }
     Serial.print(F("Distance: "));
     Serial.println(distance);
-    // data is read out, time for another reading!
     vl53.clearInterrupt();
-    return distance;
+    return (int)distance;
   }
   return -2;
 }
@@ -262,28 +307,23 @@ void setup() {
   pinMode(LED_BUILTIN, OUTPUT);
   app.onRepeatMicros(1e6 / 1, []() { ToggleLed(); });
 
+  // set LED GPIOs to active low
   for (int sig=0; sig<NUM_SIGS; sig++) {
     gpio_config_t io_conf = {};
-    io_conf.pin_bit_mask = (1ULL << (gpio_num_t)signals[sig][0] | 1ULL << (gpio_num_t)signals[sig][1] | 1ULL << (gpio_num_t)signals[sig][2]);
+    //io_conf.pin_bit_mask = (1ULL << (gpio_num_t)signals[sig][0] | 1ULL << (gpio_num_t)signals[sig][1] | 1ULL << (gpio_num_t)signals[sig][2]);
+    io_conf.pin_bit_mask = (1ULL << (gpio_num_t)signals[sig].GPIO[0] | 1ULL << (gpio_num_t)signals[sig].GPIO[1] | 1ULL << (gpio_num_t)signals[sig].GPIO[2]);
     io_conf.mode = GPIO_MODE_OUTPUT;
     io_conf.pull_up_en = GPIO_PULLUP_ENABLE;
     io_conf.intr_type = GPIO_INTR_DISABLE;
     gpio_config(&io_conf);
-    // test crossing signals at startup
-    // turn on green
-    gpio_set_level((gpio_num_t)signals[sig][0], 0);
-    gpio_set_level((gpio_num_t)signals[sig][1], 1);
-    gpio_set_level((gpio_num_t)signals[sig][2], 1);
-    delay(200);
-    // turn on red
-    gpio_set_level((gpio_num_t)signals[sig][0], 1);
-    gpio_set_level((gpio_num_t)signals[sig][1], 1);
-    gpio_set_level((gpio_num_t)signals[sig][2], 0);
-    delay(200);
-    // turn on yellow
-    gpio_set_level((gpio_num_t)signals[sig][0], 1);
-    gpio_set_level((gpio_num_t)signals[sig][1], 0); 
-    gpio_set_level((gpio_num_t)signals[sig][2], 1);
+  }
+  // test crossing signals at startupeifjcbfenig
+  for (Direction dir = N; dir != nulldir; dir = static_cast<Direction>(static_cast<int>(dir) + 1)) {
+    setLED(dir, G);
+    delay(500);
+    setLED(dir,R);
+    delay(500);
+    setLED(dir,Y);
   }
 
   // set pins for controlling voltage to track
@@ -298,43 +338,63 @@ void setup() {
   // measure ambient light on photoresistors
   calibrateLight(LIGHT_CYCLES);
 
-  // initialize TOF sensor
-  Wire.begin(SDA,SCL);
-  if (! vl53.begin(0x29, &Wire)) {
-    logTo::logToAll("Error on init of VL sensor: " + String(vl53.vl_status));
+  if (STARTTRIG > 0) {
+    // initialize TOF sensor
+    Wire.begin(SDA,SCL);
+    if (! vl53.begin(0x29, &Wire)) {
+      logTo::logToAll("Error on init of VL sensor: " + String(vl53.vl_status));
+    }
+    logTo::logToAll("VL53L1X sensor OK!");
+    logTo::logToAll("Sensor ID: 0x" + String(vl53.sensorID(), HEX));
+    if (! vl53.startRanging()) {
+      logTo::logToAll("Couldn't start ranging: " + String(vl53.vl_status));
+    }
+    logTo::logToAll("Ranging started");
+    // Valid timing budgets: 15, 20, 33, 50, 100, 200 and 500ms
+    vl53.setTimingBudget(100);
+    logTo::logToAll("Timing budget (ms): " + String(vl53.getTimingBudget()));
+    //vl53.VL53L1X_SetDistanceThreshold(0, 200, 3, 1);
+    //vl53.VL53L1X_SetInterruptPolarity(0);
+    avgTOF.begin();
   }
-  logTo::logToAll("VL53L1X sensor OK!");
-
-  logTo::logToAll("Sensor ID: 0x" + String(vl53.sensorID(), HEX));
-
-  if (! vl53.startRanging()) {
-    logTo::logToAll("Couldn't start ranging: " + String(vl53.vl_status));
-  }
-  logTo::logToAll("Ranging started");
-
-  // Valid timing budgets: 15, 20, 33, 50, 100, 200 and 500ms!
-  vl53.setTimingBudget(50);
-  logTo::logToAll("Timing budget (ms): " + String(vl53.getTimingBudget()));
-
-  /*
-  vl.VL53L1X_SetDistanceThreshold(100, 300, 3, 1);
-  vl.VL53L1X_SetInterruptPolarity(0);
-  */
 
   // here's where the magic happens...determine if any sensors have triggered and set signals
+  /*
+  new algorithm
+  num_trig=0
+  loop through sensors
+  if any sensor is triggered, set trigger=true, num_trig++
+    if its corresponding LED is yellow, set LED to green and all other LEDs to red, 
+    and mark the opposite sensor on the same track (opposite = other sensor)
+  if a sensor is triggered and it's already red:
+    - if it's on the same (NS, EW) track as a green signal, do nothing (same train crossing second signal)
+        mark clearsig = signal?
+        set timer so signals go back to Y after this sensor clears?
+    - else turn off other track. There should now be 2 sensors triggered         num_trig++
+  how to determine track is clear?
+    either no sensors are triggered (go to yellow) or one sensor is triggered (waiting)
+  if no sensors triggered, set 5 second timer to set all to yellow
+  after loop, check num_trig
+    if num_trig == 1 and LED at triggered sensor is R, it can go Y and delay (will go green next loop)
+  */
   app.onRepeat(LOOPDELAY, []() {
     int i, analogValue, triggerValue;
     float trigRatio;
     unsigned long cTime = millis();
 
-    bool nsTriggerHigh = false;
-    bool ewTriggerHigh = false;
+    bool nTrig=false;
+    bool sTrig=false;
+    bool eTrig=false;
+    bool wTrig=false;
     // first check to see if any sensors have triggered in either direction
     if (STARTTRIG > 0) {
-      if (int x = checkTOF() >=0) // sometimes it can't read state don't know why
-        tof = x;
+      int x = checkTOF();
+      if (checkTOF() >=0) { // sometimes it can't read state don't know why
+        tof = avgTOF.reading(x);
+        Serial.printf("checkTOF=%d\n", x);
+      }
       if (tof > -1 && tof < 100) {  // arbitrary value right now
-        nsTriggerHigh = true;
+        //nsTriggerHigh = true;
         logTo::logToAll("tof trigger " + String(tof));
         if (teleplot)
           Serial.printf(">tof:%d\n", tof);
@@ -348,37 +408,44 @@ void setup() {
         Serial.printf(">trig%d:%d\n",i,analogValue);
       trigRatio = (analogValue/(float)triggers[i].initVal)*100;
       if (trigRatio < triggers[i].trigLevel) {
-        //logTo::logToAll("sensor " + String(i) + " dir: " + printDirection(triggers[i].trackDir));
-        if (triggers[i].trackDir == N || triggers[i].trackDir == S) {
-          nsTriggerHigh = true;
-        }
-        if (triggers[i].trackDir == E || triggers[i].trackDir == W) {
-          ewTriggerHigh = true;
-        }
+        if (triggers[i].trackDir == N)
+          nTrig = true;
+        if (triggers[i].trackDir == S)
+          sTrig = true;
+        if (triggers[i].trackDir == E)
+          eTrig = true;
+        if (triggers[i].trackDir == W)
+          eTrig = true;
         lastTrigTime = cTime;
       }
     }
-    if (nsTriggerHigh) {
+    if (nTrig || sTrig) {
       if (nsState.state == Y) { // state change
         logTo::logToAll("NS sensor triggered on Y go to green " + String(cTime/1000));
-        showLight();
+        //showLight();
         nsState.state = G;
         ewState.state = R;
-        setLED(N, G);
-        setLED(S, G);
+        if (nTrig) {
+          setLED(N, G); setLED(S, R); setLED(E, R); setLED(W, R);
+        } else {
+          setLED(S, G); setLED(N, R);
+        }
       } else { // my state is red and there's still a train on the other block
         //logTo::logToAll("NS trigger high and state (ns/ew): " + printState(nsState.state) + "/" + printState(ewState.state));
         if (nsState.state == R)
-          if (ewTriggerHigh) {
-            // turn off this block! state was red and we got a trigger
-            logTo::logToAll("NS sensor triggered on R shut down block! " + String(cTime/1000));
-            digitalWrite(RELAYIN, HIGH);
-            showLight();
+          if (eTrig || wTrig) {
+            if (digitalRead(RELAYIN) == 0) { // if relay pin is high we're already stopped
+              // turn off this block! state was red and we got a trigger
+              logTo::logToAll("NS sensor triggered on R shut down block! " + String(cTime/1000));
+              digitalWrite(RELAYIN, HIGH);
+              //showLight();
+            }
           } else {
-            logTo::logToAll("NS clear to proceed "  + printState(nsState.state) + " " + String(cTime/1000) + " in " + String(CLEARDELAY*500) + " ewtrig: " + String(ewTriggerHigh));
-            showLight();
+            logTo::logToAll("NS clear to proceed "  + printState(nsState.state) + " " + String(cTime/1000) + " in " + String(CLEARDELAY*500) + " E trig: " + String(eTrig) + " W trig: " + String(wTrig));
+            //showLight();
             nsState.state = Y;
             ewState.state = R;
+            // TBD: not working because direction Y sets all LEDs
             setLED(N,Y);
             setLED(S,Y);
             setLED(E,R);
@@ -388,26 +455,31 @@ void setup() {
           }
       }
     }
-    if (ewTriggerHigh) {
+    if (eTrig || wTrig) {
       if (ewState.state == Y) { // state change
         logTo::logToAll("EW sensor triggered on Y go to green " + String(cTime/1000));
-        showLight();
+        //showLight();
         ewState.state = G;
         nsState.state = R;
-        setLED(E,G);
-        setLED(W,G);
+        if (eTrig) {
+          setLED(E,G); setLED(W,R);
+        } else {
+          setLED(W,G); setLED(E,R);
+        }
       // if my state was set to R and I'm triggering, I can go if the other direction ISN'T triggered
       } else {
         //logTo::logToAll("EW trigger high and state (ns/ew): " + printState(nsState.state) + "/" + printState(ewState.state));
         if (ewState.state == R)
-          if (nsTriggerHigh) {
-            // turn off this block! state was red and we got a trigger
-            logTo::logToAll("EW sensor triggered on R shut down block! " + String(cTime/1000));
-            digitalWrite(RELAYOUT, HIGH);
-            showLight();
+          if (nTrig || sTrig) {
+            if (digitalRead(RELAYOUT) == 0) { // if relay pin is high we're already stopped
+              // turn off this block! state was red and we got a trigger
+              logTo::logToAll("EW sensor triggered on R shut down block! " + String(cTime/1000));
+              digitalWrite(RELAYOUT, HIGH);
+              //showLight();
+            }
           } else {
-            logTo::logToAll("EW clear to proceed "  + printState(ewState.state) + " " + String(cTime/1000) + " in " + String(CLEARDELAY*500) + " NStrig: " + String(nsTriggerHigh));
-            showLight();
+            logTo::logToAll("EW clear to proceed "  + printState(ewState.state) + " " + String(cTime/1000) + " in " + String(CLEARDELAY*500) + " N trig: " + String(nTrig) + " S trig: " + String(sTrig));
+            //showLight();
             nsState.state = R;
             ewState.state = Y;
             setLED(E,Y); 
@@ -421,7 +493,7 @@ void setup() {
     }
     // no triggers high so set all back to yellow
     // wait CLEARDELAY seconds since last trigger before clearing
-    if (!nsTriggerHigh && !ewTriggerHigh) {  
+    if (!(nTrig || sTrig || eTrig || wTrig)) {
       //logTo::logToAll("NS=" + printState(nsState.state) + " EW=" + printState(ewState.state));
       if (nsState.state != Y && ewState.state != Y) {
         if ((cTime - lastTrigTime) > CLEARDELAY*1000) {

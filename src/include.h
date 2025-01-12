@@ -40,7 +40,7 @@ extern bool teleplot;
 #define LIGHT_CYCLES 100
 #define TRIGLEVEL 55 // % trigger sensor if light drops to % of start value
 #define MOVINGAVG 10
-#define CLEARDELAY 8  // seconds to wait after crossing is clear to reset signals
+#define CLEARDELAY 6  // seconds to wait after crossing is clear to reset signals
 #define LOOPDELAY 100 // (msecs) configurable in case trains move faster
 
 // GPIOs to prevent collision at crossing
@@ -69,8 +69,8 @@ struct Trigger {
     int initVal;
     int curVal;
     movingAvg avgVal; 
-    int GPIO;
-    int trigLevel; // threshold for triggering; defaults to TRIGLEVEL
+    int GPIO;   // GPIO where sensor is attached
+    int trigLevel {TRIGLEVEL};
 
     Trigger(Direction trackDir, Direction location, bool active, int initVal, int curVal, int avgSize, int gpio, bool wasTriggered)
         : trackDir(trackDir), location(location), active(active), initVal(initVal), curVal(curVal), avgVal(avgSize), GPIO(gpio), trigLevel(TRIGLEVEL) {}
@@ -83,6 +83,14 @@ typedef struct {
 
 extern struct Trigger triggers[];
 extern int trigSize;
+
+#define NUM_SIGS 4  // 4 signals on the diamond crossing
+#define NUM_LEDS 3  // each signal has 3 LEDs
+
+struct LED {
+    int GPIO[NUM_LEDS];
+    Direction location;  // location (N/S/E/W) of the signal/LEDs
+};
 
 // wifi/web functions
 bool initWiFi();
