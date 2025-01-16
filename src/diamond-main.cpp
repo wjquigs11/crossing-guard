@@ -8,8 +8,6 @@
 #define SDA 25 // crossing guard under layout
 #define SCL 15
 
-#define STARTTRIG 1 // if STARTTRIG == 0, use photoresistors
-
 File consLog;
 using namespace reactesp;
 ReactESP app;
@@ -20,22 +18,26 @@ bool teleplot = false;
 
 bool stopInner = false;
 bool stopOuter = false;
+bool enableRelays = true;
 
 int NSlocoID, EWlocoID;
 int lastSpeed;
 String DCCEXhostname;
 
-SFEVL53L1X dSens;
-
 // each sensor represents a photoresistor or IR sensor
 // the west side of my crossing has a turnout so it needs two sensors
 struct Sensor sensors[] = {
-  {S, false, 0, 0, MOVINGAVG, 36, TRIGLEVEL},  // 0 is a north/south trigger on the south side of the junction
-  {W, false, 0, 0, MOVINGAVG, 39, TRIGLEVEL},  // 1 
-  {W, false, 0, 0, MOVINGAVG, 34, TRIGLEVEL},  // 2
-  {N, false, 0, 0, MOVINGAVG, 35, TRIGLEVEL},  // 3
-  {E, false, 0, 0, MOVINGAVG, 32, TRIGLEVEL}   // 4
+  {E, false, 0, 0, MOVINGAVG, 3, TRIGLEVEL},
+  {W, false, 0, 0, MOVINGAVG, 0, TRIGLEVEL},      
+  {S, false, 0, 0, MOVINGAVG, 2, TRIGLEVEL},      
+  {N, false, 0, 0, MOVINGAVG, 1, TRIGLEVEL},       
+  {W, false, 0, 0, MOVINGAVG, 4, TRIGLEVEL},      
+  {nulldir, false, 0, 0, MOVINGAVG, 5, TRIGLEVEL} // 5 is in the tunnel west of the double slip, not at the crossing
 };
+
+QWIICMUX myMux;
+SFEVL53L1X irSensor[MUXMAX];
+bool sensorOn[MUXMAX];
 
 // last time any sensor was triggered
 // used to debounce gaps between cars that allow light on sensor
@@ -47,6 +49,12 @@ int totalLight, newTotalLight;
 
 int trigSize = sizeof(sensors) / sizeof(sensors[0]);
 //int trigSize = 1;
+
+Direction lastTrigDirection = nulldir;  // Store the direction of last trigger
+bool waitingForClear = false;  // Flag to indicate we're waiting for opposite direction
+
+blockState crossState = Clear;
+Direction fromDir = nulldir;
 
 // signals are defined by the GPIOs each LED is connected to, the location, and the state
 // NB at initialization all locoIDs will be 0
@@ -131,53 +139,69 @@ void setLED(int sigIdx, State state) {
   }
 }
 
-void calibrateLight(int cycles) {
+void calibrateSensors(int cycles) {
   int i, j;
   totalLight = 0;
-  logTo::logToAll("Starting light measurement...");
-  for (j=STARTTRIG; j < trigSize; j++) {
-    sensors[j].avgVal.begin();      
+  logTo::logToAll("Starting IR measurement...");
+  for (j=0; j < MUXMAX; j++) {
+    sensors[j].initVal=0;   
   }
-  int dSamples;
+  int dSamples=0;
   for (i=0; i < cycles; i++) {
-    int distance;
-    if (dSens.checkForDataReady()) {
-      distance = dSens.getDistance();
-      dSens.clearInterrupt();
-      sensors[0].initVal += distance;
-      dSamples++;
-    }
-    for (j=STARTTRIG; j < trigSize; j++) {
-      sensors[j].initVal += analogRead(sensors[j].GPIO);
+    for (j=0; j<MUXMAX; j++) {
+      if (sensorOn[j]) {
+        Serial.print(j);
+        myMux.setPort(j);
+        irSensor[sensors[j].sensIdx].startRanging();
+        while (!irSensor[sensors[j].sensIdx].checkForDataReady()) {
+          Serial.print(".");
+          delay(5);
+        }       
+        int dist = irSensor[sensors[j].sensIdx].getDistance();
+        irSensor[sensors[j].sensIdx].clearInterrupt();
+        Serial.printf("%d:%d ", j, dist);
+        sensors[j].initVal += dist;
+        irSensor[sensors[j].sensIdx].stopRanging();
+      }
     }
     delay(10);
+    dSamples++;
   }
-  if (dSamples != i) logTo::logToAll("distance samples: " + String(dSamples));
+  if (dSamples != i) logTo::logToAll("distance samples mismatch: " + String(dSamples) + "/" + String(i));
   logTo::logToAll("Startup done, light measurements:");
   // average initial readings
-  for (i = 0; i < trigSize; i++) {
-    sensors[i].initVal /= cycles;
-    logTo::logToAll(String(i) + ": loc " + printDirection(sensors[i].location) + ", " + String(sensors[i].initVal) + " gpio:" + String(sensors[i].GPIO));
-    totalLight += sensors[i].initVal;
+  for (i = 0; i < MUXMAX; i++) {
+    if (sensorOn[i]) {
+      sensors[i].initVal /= dSamples;
+      logTo::logToAll(String(i) + ": loc " + printDirection(sensors[i].location) + ", " + String(sensors[i].initVal) + " sensor:" + String(sensors[i].sensIdx));
+      totalLight += sensors[i].initVal;
+    }
   }
-
-  logTo::logToAll("total light level: " + String(totalLight));
+  logTo::logToAll("total IR level: " + String(totalLight));
 }
 
-void showLight() {
+void showSensors() {
   int i;
   newTotalLight = 0;
-  for (i = 0; i < trigSize; i++) {
-    if (i == 0) {
-      sensors[i].curVal = dSens.getDistance();
-    } else {
-      sensors[i].curVal = analogRead(sensors[i].GPIO);
+  for (i = 0; i < MUXMAX; i++) {
+    if (sensorOn[i]) {
+      myMux.setPort(i);
+      irSensor[sensors[i].sensIdx].startRanging();
+      while (!irSensor[sensors[i].sensIdx].checkForDataReady()) {
+        Serial.print(".");
+        delay(5);
+      }       
+      sensors[i].curVal = irSensor[sensors[i].sensIdx].getDistance();
+      irSensor[sensors[i].sensIdx].stopRanging();
+      logTo::logToAll(String(i) + " curr: " + String(sensors[i].curVal) + " init: " + String(sensors[i].initVal)
+        + " ratio: " + String((float)sensors[i].curVal/sensors[i].initVal*100, 2) 
+        + " avg: " + String(sensors[i].avgVal.getAvg())
+        + " avgratio: " + String((float)sensors[i].avgVal.getAvg()/sensors[i].initVal*100, 2)
+        + " % thresh: " + sensors[i].trigLevel);
+      newTotalLight += sensors[i].curVal;
     }
-    logTo::logToAll(String(i) + " curr: " + String(sensors[i].curVal) + " init: " + String(sensors[i].initVal)
-      + " ratio: " + String((float)sensors[i].curVal/sensors[i].initVal*100, 2) + "% thresh: " + sensors[i].trigLevel);
-    newTotalLight += sensors[i].curVal;
   }
-  logTo::logToAll("total light level (old/new): " + String(totalLight) + "/" + String(newTotalLight));
+  logTo::logToAll("total IR level (old/new): " + String(totalLight) + "/" + String(newTotalLight));
 }
 
 void ToggleLed() {
@@ -200,25 +224,14 @@ void setup() {
   attachInterrupt(digitalPinToInterrupt(0), buttonISR, FALLING);
 
   Wire.begin(SDA,SCL);
-#if MUX
   if (myMux.begin() == false) {
-    Serial.println("Mux not detected. Freezing...");
-    while (1);
-  }
-  Serial.println("i2c mux detected");
-
-  myMux.setPort(1); //Connect master to port labeled '1' on the mux
-
-  // i2c mux
-  for (int i=0; i<7; i++)
-    myMux.disablePort(i);
-#endif
-  if (dSens.begin()){
-    Serial.println("IR sensor not found!");
-    while (1);
-  }
-  dSens.setDistanceModeShort();
-  dSens.startRanging();
+    Serial.println("Mux not detected!");
+  } else
+    Serial.println("Mux detected");
+  //myMux.setPort(0);
+  //byte currentPortNumber = myMux.getPort();
+  //Serial.print("CurrentPort: ");
+  //Serial.println(currentPortNumber);
 
   if (SPIFFS.begin())
     Serial.println("opened SPIFFS");
@@ -253,13 +266,6 @@ void setup() {
   host = preferences.getString("hostname", host);
   logTo::logToAll("hostname: " + host + "\n");
 
-  NSlocoID = preferences.getInt("NSlocoID",0);
-  logTo::logToAll("NSloco: " + String(NSlocoID));
-  EWlocoID = preferences.getInt("EWlogoID",0);
-  logTo::logToAll("EWloco: " + String(EWlocoID));
-  DCCEXhostname = preferences.getString("DCC-EX","");
-  logTo::logToAll("DCCEXhostname: " + String(DCCEXhostname));
-  
   if (startWifi)
     if (initWiFi()) {
       startWebServer();
@@ -279,6 +285,36 @@ void setup() {
     } else {
       startAP();
     }
+
+  for (int i=0; i<MUXMAX; i++) {
+    Serial.printf("%d:",i);
+    sensors[i].avgVal.begin();   // init moving average
+    myMux.setPort(i);
+    if (irSensor[i].begin() != 0) {
+      Serial.println("Sensor failed to begin.");
+      //while (1);
+    } else {
+      sensorOn[i] = true;
+      Serial.println(" Sensor online!");
+      irSensor[i].setDistanceModeShort();
+      irSensor[i].startRanging();
+    }
+  }
+
+  int loco = preferences.getInt("NSlocoID",0);
+  if (getSpeed(loco) >= 0) {
+    // don't set loco if we can't talk to DCC
+    NSlocoID = loco;
+    logTo::logToAll("NSloco: " + String(NSlocoID));
+  } else logTo::logToAll("cannot talk to DCC-EX not setting NSlocoID");
+  loco = preferences.getInt("EWlogoID",0);
+  if (getSpeed(loco) >= 0) {
+    // don't set loco if we can't talk to DCC
+    EWlocoID = loco;
+    logTo::logToAll("EWloco: " + String(EWlocoID));
+  } else logTo::logToAll("cannot talk to DCC-EX not setting EWlocoID");
+  DCCEXhostname = preferences.getString("DCC-EX","");
+  logTo::logToAll("DCCEXhostname: " + String(DCCEXhostname));
 
   // toggle the LED pin at rate of 1 Hz
   pinMode(LED_BUILTIN, OUTPUT);
@@ -310,14 +346,11 @@ void setup() {
   pinMode(RELAYOUT, OUTPUT); // outer (flat) loop
   digitalWrite(RELAYOUT, LOW);
  
-  // set the ADC attenuation to 11 dB (up to ~3.3V input)
-  analogSetAttenuation(ADC_11db);
-
-  // measure ambient light on photoresistors
-  calibrateLight(LIGHT_CYCLES);
+  calibrateSensors(LIGHT_CYCLES);
   printSigState();
+  logTo::logToAll("starting loop...");
 
-  logToSerial = false;  // stop logging to serial so we can talk to command station
+  logToSerial = false;  // stop logging to serial after setup so we can talk to command station
 
   // here's where the magic happens...determine if any sensors have triggered and set signals
   static int greenSig;
@@ -325,106 +358,126 @@ void setup() {
     int analogValue, triggerValue;
     float trigRatio;
     unsigned long cTime = millis();
-    int trigIdx;
+    int i,trigIdx;
     int numTrigs=0;
     bool trig=false;
 
     //printSigState();
-    for (int i = 0; i < trigSize; i++) {
+    for (i = 0; i < CROSSMAX; i++) {
       cTime = millis();
-      if (i == 0) {
-        analogValue = sensors[i].curVal = dSens.getDistance();
-      } else {
-        sensors[i].curVal = analogRead(sensors[i].GPIO);
-        analogValue = sensors[i].avgVal.reading(sensors[i].curVal);
-      }
-      trigRatio = (analogValue/(float)sensors[i].initVal)*100;
-      if (teleplot)
-        Serial.printf(">[%ld]trig%d:%d:[%ld]\n",i,analogValue,cTime);
-      if (trigRatio < sensors[i].trigLevel) {
-        trig = true;
-        lastTrigTime = cTime;
-        numTrigs++;
-        trigIdx = i;  // index of last triggered sensor
-        for (int j=0; j<NUM_SIGS; j++) {
-          if (sensors[i].location == signals[j].location) {
-            // we found the signal at the triggered sensor
-            if (signals[j].state == Y) {
-              // signal is yellow implying no other triggers
-              for (int k=0; k<NUM_SIGS; k++) {
-                if (k == j) {
-                  setLED(j,G);
-                  greenSig = j;
-                } else {
-                  setLED(k,R);
-                }
-                // now we should have one G and NUM_LEDS-1 signals R
-                // turn on this track if it was off
-                // check for DCC and restore to lastSpeed
-                if (digitalRead(signals[j].solenoid)) { // if relay pin is HIGH we're already stopped
-                  logTo::logToAll("proceeding; turn on solenoid");
-                  digitalWrite(signals[j].solenoid, LOW);      
-                } else if (getSpeed(signals[j].loco == 0)) {
-                  logTo::logToAll("proceeding on DCC track");
-                  resume(signals[j].loco);
-                }
-              } // for k (LEDs)
-            // state at triggered signal was not Y
-            } else if (signals[j].state == R) {
-              // we can go through a red if it's facing the other direction on the same track
-              if (signals[j].location != complement(signals[greenSig].location)) {
-                if (digitalRead(signals[j].solenoid) == 0) { // if relay pin is high we're already stopped so check for low
-                  // turn off this block! state was red and we got a trigger
-                  logTo::logToAll("sensor triggered on R shut down block! " + String(cTime/1000));
-                  if (signals[j].loco) {
-                    // if loco != 0; it's DCC
-                    getSpeed(signals[j].loco);
-                    brake(signals[j].loco);
-                    logTo::logToAll("sending brake command for loco " + String(NSlocoID) + " to " + DCCEXhostname);
+      if (sensorOn[i]) {
+        myMux.setPort(i);
+        irSensor[sensors[i].sensIdx].startRanging();
+        while (!irSensor[sensors[i].sensIdx].checkForDataReady()) {
+          //Serial.print(".");
+          delay(5);
+        }       
+        sensors[i].curVal = irSensor[sensors[i].sensIdx].getDistance();  // this reading
+        irSensor[sensors[i].sensIdx].stopRanging();
+        analogValue = sensors[i].avgVal.reading(sensors[i].curVal); // moving average of last X readings
+        trigRatio = (analogValue/(float)sensors[i].initVal)*100;
+        if (teleplot)
+          Serial.printf(">[%ld]trig%d:%d:[%ld]\n",i,analogValue,cTime);
+        if (trigRatio < sensors[i].trigLevel) {
+          trig = true;
+          lastTrigTime = cTime;
+          numTrigs++;
+          trigIdx = i;  // index of last triggered sensor
+          char buf[256];
+          sprintf(buf,"sensor %d triggered %s", i, printDirection(sensors[i].location));
+          logTo::logToAll(String(buf));
+          if (crossState == Occupied && sensors[i].location == complement(fromDir)) {
+            // train is in crossing and hit second sensor
+            crossState = Clearing;
+          }
+          for (int j=0; j<NUM_SIGS; j++) {
+            if (sensors[i].location == signals[j].location) {
+              // we found the signal at the triggered sensor
+              if (signals[j].state == Y) {
+                logTo::logToAll("sensor " + String(i) + " loc " + printDirection(sensors[i].location) + " trigger signal " + String(j) + " loc " + printState(signals[j].state));
+                // signal is yellow implying no other triggers
+                crossState = Occupied;
+                fromDir = sensors[i].location;
+                for (int k=0; k<NUM_SIGS; k++) {
+                  if (k == j) {
+                    setLED(j,G);
+                    greenSig = j;
                   } else {
-                    // not DCC; turn off solenoid
-                    logTo::logToAll("stopping track on solenoid " + String(signals[j].solenoid));
-                    digitalWrite(signals[j].solenoid, HIGH); // writing HIGH switches relay (track is on NC so it's turned off)
+                    setLED(k,R);
+                  }
+                  // now we should have one G and NUM_LEDS-1 signals R
+                  // turn on this track if it was off
+                  // check for DCC and restore to lastSpeed
+                  if (digitalRead(signals[j].solenoid)) { // if relay pin is HIGH we're already stopped
+                    logTo::logToAll("proceeding; turn on solenoid");
+                    digitalWrite(signals[j].solenoid, LOW);      
+                  } else if (signals[j].loco && getSpeed(signals[j].loco == 0)) {
+                    logTo::logToAll("proceeding on DCC track");
+                    resume(signals[j].loco);
+                  }
+                } // for k (LEDs)
+              // state at triggered signal was not Y
+              } else if (signals[j].state == R) {
+                // we can go through a red if it's facing the other direction on the same track
+                if (signals[j].location == complement(signals[greenSig].location)) {
+                  // passing a red signal implies train occupying crossing is leaving
+                  crossState = Clearing;
+                  logTo::logToAll("second trigger, clearing");
+                } else if (enableRelays) {
+                  // other direction, stop train
+                  if (digitalRead(signals[j].solenoid) == 0) { // if relay pin is high we're already stopped so check for low
+                    // turn off this block! state was red and we got a trigger
+                    logTo::logToAll("sensor triggered on R shut down block! " + String(cTime/1000));
+                    if (signals[j].loco) {
+                      // if loco != 0; it's DCC
+                      if (getSpeed(signals[j].loco) < 0) {
+                        // timed out, turn of relay
+                        digitalWrite(signals[j].solenoid, HIGH); // writing HIGH switches relay (track is on NC so it's turned off)
+                      }
+                      brake(signals[j].loco);
+                      logTo::logToAll("sending brake command for loco " + String(NSlocoID) + " to " + DCCEXhostname);
+                    } else {
+                      // not DCC; turn off solenoid
+                      logTo::logToAll("stopping track on solenoid " + String(signals[j].solenoid));
+                      digitalWrite(signals[j].solenoid, HIGH); // writing HIGH switches relay (track is on NC so it's turned off)
+                    }
                   }
                 }
-              }
-            } // else signal was green already; do nothing
-          }
-        } // for j
-      } // if trigger
-    } // for trigger loop
+              } // else signal was green already; do nothing
+            } // if location 
+          } // for j
+        } // if trigRatio
+      } // if SensorOn
+    } // for i trigger loop
+    // we've checked all signals
+    if (numTrigs > 0)
+      logTo::logToAll("triggers: " + String(numTrigs));
     if (numTrigs == 1) {
-      // one trigger, either:
-      //    a) train on green has not yet passed completely or
-      //    b) train in other direction is waiting
-      if (sensors[trigIdx].location != complement(signals[greenSig].location)) {
-        // triggered signal is not on same track as green signal
-        for (int i=0; i<NUM_SIGS; i++) {
-          if (sensors[trigIdx].location == signals[i].location) {
-            if (signals[i].state == R) {
-              // found a red signal associated with this trigger but since it's the only trigger it can proceed
-              logTo::logToAll("clear to proceed in " + String(CLEARDELAY));
-              for (int k=0; k<NUM_SIGS; k++) {
-                setLED(k,Y);
-              }
-              delay(CLEARDELAY*1000);
-              // this direction will proceed next iteration since it's now Y
-              // unless another train comes in at a lower trigger index between iterations
-              // which seems unlikely since the loop iterates at LOOPDELAY
-              // but you should lower LOOPDELAY interval in "production" just to be safe
-            }
-          }
-        }
-      } // trigger location is same track as greenSig so do nothing until it clears
-    }
-    if (numTrigs == 0) {
-      // reset all directions to yellow if they're not already
-      // X seconds after lastTrigTime (helps with short trains)
-      if (millis() - lastTrigTime > CLEARDELAY*1000)
+      // one trigger; either single train still near crossing (Clearing), do nothing
+      // or train waiting in opposite direction for Clear
+      // if trigger direction is not on same track as last passing train, we can reset to yellow
+      if (crossState == Clearing && sensors[trigIdx].location != complement(fromDir)) {
+        logTo::logToAll("one trigger, state clearing, different track, proceed");
+        crossState = Clear;
         for (int i=0; i<NUM_SIGS; i++) {
           if (signals[i].state != Y)
             setLED(i,Y);
         }
+      }
+    }
+    if (numTrigs == 0 && crossState != Occupied) {
+      // reset all directions to yellow if they're not already
+      // X seconds after lastTrigTime (helps with short trains)
+      crossState = Clear;
+      //logTo::logToAll("no triggers");
+      if (millis() - lastTrigTime > CLEARDELAY*500)
+      for (int i=0; i<NUM_SIGS; i++) {
+        if (signals[i].state != Y)
+          setLED(i,Y);
+      }
+    }
+    for (i = CROSSMAX; i < MUXMAX; i++) {
+      // now address sensors not at crossing (turnouts)
     }
   });
 }

@@ -38,7 +38,7 @@ int getSpeed(int cab) {
     String speedS = "<t " + String(cab) + ">";
     logTo::logToAll("getSpeed tx: " + speedS);
     Serial.println(speedS);
-    unsigned long timeout = 5000;  // 5 second timeout
+    unsigned long timeout = 500;
     unsigned long startTime = millis();
     String receivedString;
     while (!Serial.available()) {

@@ -32,7 +32,7 @@ String formatMacAddress(const String& macAddress) {
   return result;
 }
 
-String commandList[] = {"?", "format", "restart", "ls", "scan", "hostname", "status", "wificonfig", "teleplot", "log", "light", "stop", "go", "relay", "light", "calibrate"};
+String commandList[] = {"?", "format", "restart", "ls", "scan", "hostname", "status", "wificonfig", "teleplot", "log", "sens", "stop", "go", "relay", "calibrate", "disable", "enable"};
 #define ASIZE(arr) (sizeof(arr) / sizeof(arr[0]))
 String words[10]; // Assuming a maximum of 10 words
 
@@ -128,8 +128,8 @@ void WebSerialonMessage(uint8_t *data, size_t len) {
       logTo::logToAll("teleplot: " + String(teleplot ? "on" : "off"));
       return;
     }    
-    if (words[i].startsWith("light")) {
-      showLight();
+    if (words[i].startsWith("sens")) {
+      showSensors();
       if (!words[++i].isEmpty()) {
         int j;
         String threshS = words[i];
@@ -190,7 +190,7 @@ void WebSerialonMessage(uint8_t *data, size_t len) {
       return;
     }    
     if (words[i].startsWith("cal")) {
-      calibrateLight(LIGHT_CYCLES);
+      calibrateSensors(LIGHT_CYCLES);
       return;
     }
     if (words[i].startsWith("state")) {
@@ -224,25 +224,49 @@ void WebSerialonMessage(uint8_t *data, size_t len) {
       }    
       return;
     }
+    if (words[i].startsWith("disable")) {
+      enableRelays = false;
+      return;
+    }
+    if (words[i].startsWith("enable")) {
+      enableRelays = true;
+      for (int i=0; i<NUM_SIGS; i++) {
+        if (signals[i].state != Y)
+          setLED(i,Y);
+      }
+      return;
+    }
     if (words[i].startsWith("loco")) {
+      int s;
       if (!words[++i].isEmpty()) {
         if (words[i].startsWith("ns")) {
           if (!words[++i].isEmpty()) {
-            NSlocoID = atoi(words[i].c_str());
-            preferences.putInt("NSlocoID", NSlocoID);
+            int loco = atoi(words[i].c_str());
+            if (getSpeed(loco) >= 0) {
+              // don't set loco if we can't talk to DCC
+              NSlocoID = loco;
+              preferences.putInt("NSlocoID", NSlocoID);
+            }
           }
         } else if (words[i].startsWith("ew")) {
           if (!words[++i].isEmpty()) {
-            EWlocoID = atoi(words[i].c_str());
-            preferences.putInt("NSlocoID", EWlocoID);
+            int loco = atoi(words[i].c_str());
+            if (getSpeed(loco) >= 0) {
+              // don't set loco if we can't talk to DCC
+              EWlocoID = loco;
+              preferences.putInt("EWlocoID", EWlocoID);
+            }
           }
         }
-        for (int sig=0; sig<NUM_SIGS; sig++) {
-          if (signals[sig].location == N || signals[sig].location == S)
-            signals[sig].loco = NSlocoID;
+        for (s=0; s<NUM_SIGS; s++) {
+          if (signals[s].location == N || signals[s].location == S)
+            signals[s].loco = NSlocoID;
           else
-            signals[sig].loco = EWlocoID;
+            signals[s].loco = EWlocoID;
         }
+      }
+      for (s=0; s<NUM_SIGS; s++) {
+        logTo::logToAll("signal:" + String(s) + " loco:" + String(signals[s].loco));
       }
       logTo::logToAll("NSloco: " + String(NSlocoID));
       logTo::logToAll("EWloco: " + String(EWlocoID));

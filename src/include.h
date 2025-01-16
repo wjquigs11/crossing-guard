@@ -15,6 +15,7 @@
 #include <SPI.h>
 #include <MovingAvg.h>
 #include <SparkFun_VL53L1X.h>
+#include <SparkFun_I2C_Mux_Arduino_Library.h>
 
 #include "logto.h"
 
@@ -39,11 +40,11 @@ extern int minReadRate;
 extern bool teleplot;
 extern bool logToSerial;
 
-#define LIGHT_CYCLES 100
-#define TRIGLEVEL 55 // % trigger sensor if light drops to % of start value
-#define MOVINGAVG 5
-#define CLEARDELAY 6  // seconds to wait after crossing is clear to reset signals
-#define LOOPDELAY 100 // (msecs) configurable in case trains move faster
+#define LIGHT_CYCLES 10
+#define TRIGLEVEL 10 // % trigger sensor if it drops to % of start value
+#define MOVINGAVG 10
+#define CLEARDELAY 8  // seconds to wait after crossing is clear to reset signals
+#define LOOPDELAY 10 // (msecs) configurable in case trains move faster
 
 // GPIOs to prevent collision at crossing
 // switching to relays from MOSFET because MOSFET is polarized
@@ -53,6 +54,7 @@ extern bool logToSerial;
 #define EASTWEST RELAYOUT
 extern bool stopInner;
 extern bool stopOuter;
+extern bool enableRelays;
 
 typedef enum {
     Y, // Yellow
@@ -65,6 +67,10 @@ typedef enum {
     nulldir
 } Direction;
 
+typedef enum {
+    Clear, Occupied, Clearing,
+} blockState;
+
 // sensors represent the photresistors in the track and their associated GPIOs for ESP32 ADCs
 struct Sensor {
     Direction location; // e.g, located at W end of E/W track
@@ -72,11 +78,11 @@ struct Sensor {
     int initVal;
     int curVal;
     movingAvg avgVal; 
-    int GPIO;   // GPIO where sensor is attached
+    int sensIdx;    // Sensor[] isn't necessarly in same order as irSensor[]
     int trigLevel {TRIGLEVEL};
 
-    Sensor(Direction location, bool active, int initVal, int curVal, int avgSize, int gpio, bool wasTriggered)
-        : location(location), active(active), initVal(initVal), curVal(curVal), avgVal(avgSize), GPIO(gpio), trigLevel(TRIGLEVEL) {}
+    Sensor(Direction location, bool active, int initVal, int curVal, movingAvg avgVal, int sensIdx, int trigLevel)
+        : location(location), active(active), initVal(initVal), curVal(curVal), avgVal(avgVal), sensIdx(sensIdx), trigLevel(TRIGLEVEL) {}
 };
 
 extern struct Sensor sensors[];
@@ -94,6 +100,15 @@ struct Signal {
 };
 extern Signal signals[];
 
+extern QWIICMUX myMux;
+#define MUXMAX 8  // number of MUX ports
+extern SFEVL53L1X irSensor[MUXMAX];
+extern bool sensorOn[MUXMAX];
+#define CROSSMAX 5  // MUX ports 0..4 are for crossing
+
+extern blockState crossState;
+extern Direction fromDir;
+
 // wifi/web functions
 bool initWiFi();
 void startAP();
@@ -103,10 +118,11 @@ void logToAll(String s);
 void WebSerialonMessage(uint8_t *data, size_t len);
 
 // track control functions
-void showLight();
+void showSensors();
 void setTrigger(Sensor *trigger, int trigLevel);
-void calibrateLight(int cycles);
+void calibrateSensors(int cycles);
 void printSigState();
+void setLED(int sigIdx, State state);
 
 extern int NSlocoID, EWlocoID;
 extern int lastSpeed;
