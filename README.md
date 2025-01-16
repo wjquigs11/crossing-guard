@@ -29,7 +29,7 @@ Clear - All signals yellow, trains may proceed
 Occupied - One train in crossing, signals set accordingly
 Clearing - Train exiting crossing, waiting for complete clearance
 
-## ### ## Signal Logic
+## Signal Logic
 Yellow signals indicate track is clear to proceed
 Green signal shows for train currently cleared through crossing
 Red signals stop opposing traffic
