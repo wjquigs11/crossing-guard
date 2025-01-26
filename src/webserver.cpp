@@ -12,6 +12,7 @@ extern ReactESP app;
 String getSensorReadings() {
   String jsonString;
   serializeJson(readings,jsonString); // returns an int?
+  readings = String();
   return jsonString;
 }
 

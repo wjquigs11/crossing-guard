@@ -32,9 +32,8 @@ String formatMacAddress(const String& macAddress) {
   return result;
 }
 
-String commandList[] = {"?", "format", "restart", "ls", "scan", "hostname", "status", "wificonfig", "teleplot", "log", "sens", "stop", "go", "relay", "calibrate", "disable", "enable"};
+String commandList[] = {"?", "host","wifi","log","teleplot","sens","stop [i/o]","start [i/o]","relay","calibrate","state","<","speed","brake","resume","disable","enable","loco [ns/ew]","cab","serial"};
 #define ASIZE(arr) (sizeof(arr) / sizeof(arr[0]))
-String words[10]; // Assuming a maximum of 10 words
 
 void WebSerialonMessage(uint8_t *data, size_t len) {
   //Serial.printf("Received %lu bytes from WebSerial: ", len);
@@ -42,6 +41,11 @@ void WebSerialonMessage(uint8_t *data, size_t len) {
   //Serial.println();
   //WebSerial.print("Received: ");
   String dataS = String((char*)data);
+  serialWrapper(dataS);
+  dataS = String();
+}
+
+void serialWrapper(String dataS) {
   // Split the String into an array of Strings using spaces as delimiters
   String words[10]; // Assuming a maximum of 10 words
   int wordCount = 0;
@@ -92,11 +96,13 @@ void WebSerialonMessage(uint8_t *data, size_t len) {
     }
     if (words[i].startsWith("host")) {
       if (!words[++i].isEmpty()) {
+        preferences.begin("ESPprefs", false);
         host = words[i];
         preferences.putString("hostname", host);
-        logTo::logToAll("hostname set to " + host + "\n");
-        logTo::logToAll("restart to change hostname\n");
-        logTo::logToAll("preferences " + preferences.getString("hostname") + "\n");
+        logTo::logToAll("hostname set to " + host);
+        logTo::logToAll("restart to change hostname");
+        logTo::logToAll("preferences " + preferences.getString("hostname"));
+        preferences.end();
       } else {
         logTo::logToAll("hostname: " + host + "\n");
       }
@@ -182,31 +188,78 @@ void WebSerialonMessage(uint8_t *data, size_t len) {
       }
       return;
     }
-    if (words[i].startsWith("rel")) {
+    if (words[i].startsWith("rela")) {
       int i,j;
       i = digitalRead(RELAYIN);
       j = digitalRead(RELAYOUT);
-      logTo::logToAll("relay status inner/mountain loop: " + String(i) + " outer/flat loop: " + String(j));
+      String statusS = enableRelays ? "enabled" : "disabled";
+      logTo::logToAll("relay status: " + statusS);
+      logTo::logToAll("inner/mountain loop: " + String(i) + " outer/flat loop: " + String(j));
       return;
     }    
-    if (words[i].startsWith("cal")) {
+    if (words[i].startsWith("turn")) {
+      if (!words[++i].isEmpty()) {
+        int turn = atoi(words[i].c_str());
+        if (turn > 0) {
+          if (!words[++i].isEmpty()) {
+            if (words[i].startsWith("s")) {
+              logTo::logToAll("throw " + String(turn) + " straight");
+              throwWrapper(turn, true);
+            } else if (words[i].startsWith("r")) {
+              logTo::logToAll("throw " + String(turn) + " reverse");
+              throwWrapper(turn, false);
+            }
+          }
+        }
+      } else {
+        for (int j=0; j<TURNOUTS; j++) {
+          logTo::logToAll("turnout: " + String(j+1) + " state:" + ((layout[j].state ? "straight" : "reverse")));
+        }
+      }
+      return;
+    }
+    if (words[i].startsWith("trig")) {
+      if (!words[++i].isEmpty()) {
+        int trigtime = atoi(words[i].c_str());
+        if (trigtime > 30000) trigtime = 30000;
+        if (trigtime < 0) trigtime = 1;
+        turnTime = trigtime;
+      }
+      logTo::logToAll("turnout trigger time: " + String(turnTime));
+      return;
+    }
+    if (words[i].startsWith("loop")) {
+      if (!words[++i].isEmpty()) {
+        if (words[i].startsWith("on"))
+          loopMode = true;
+        else if (words[i].startsWith("off"))
+          loopMode = false;
+      }
+      logTo::logToAll("loop mode: " + String(loopMode));
+      return;
+    }
+    if (words[i].startsWith("cali")) {
       calibrateSensors(LIGHT_CYCLES);
       return;
     }
     if (words[i].startsWith("state")) {
+      logTo::logToAll("signals: ");
       printSigState();
+      logTo::logToAll("crossing: " + printCrossState(crossState));
       return;
     }
     if (words[i].startsWith("<")) {
       // echo "<>" commands to DCC-EX command station (entire string not just words[])
       WebSerial.print(dataS);
-      Serial.println((char*)data);
+      //Serial.println((char*)data);
       return;
     }
+#if 0
     if (words[i].startsWith("speed")) {
       if (!words[++i].isEmpty()) {
         int loco = atoi(words[i].c_str());
-        getSpeed(loco);
+        int speed = getSpeed(loco,1000);
+        logTo::logToAll("loco " + String(loco) + " speed is " + String(speed));
       }
       return;
     }
@@ -224,6 +277,7 @@ void WebSerialonMessage(uint8_t *data, size_t len) {
       }    
       return;
     }
+#endif
     if (words[i].startsWith("disable")) {
       enableRelays = false;
       return;
@@ -234,6 +288,7 @@ void WebSerialonMessage(uint8_t *data, size_t len) {
         if (signals[i].state != Y)
           setLED(i,Y);
       }
+      crossState = Clear;
       return;
     }
     if (words[i].startsWith("loco")) {
@@ -242,34 +297,75 @@ void WebSerialonMessage(uint8_t *data, size_t len) {
         if (words[i].startsWith("ns")) {
           if (!words[++i].isEmpty()) {
             int loco = atoi(words[i].c_str());
-            if (getSpeed(loco) >= 0) {
+#if 0
+            if (int speed = getSpeed(loco,10000) >= 0) {
               // don't set loco if we can't talk to DCC
+              logTo::logToAll("loco " + String(loco) + " speed is " + String(speed));
               NSlocoID = loco;
+              preferences.begin("ESPprefs", false);
               preferences.putInt("NSlocoID", NSlocoID);
-            }
+              preferences.putUInt("ns-loco", NSlocoID);
+              logTo::logToAll("DCC ping OK setting NSloco");
+              preferences.end();
+            } else logTo::logToAll("cannot reach DCC");
+#endif
           }
         } else if (words[i].startsWith("ew")) {
           if (!words[++i].isEmpty()) {
             int loco = atoi(words[i].c_str());
-            if (getSpeed(loco) >= 0) {
+#if 0
+            if (int speed = getSpeed(loco,10000) >= 0) {
+              logTo::logToAll("loco " + String(loco) + " speed is " + String(speed));
               // don't set loco if we can't talk to DCC
               EWlocoID = loco;
+              preferences.begin("ESPprefs", false);
               preferences.putInt("EWlocoID", EWlocoID);
-            }
+              preferences.putUInt("ew-loco", EWlocoID);
+              logTo::logToAll("DCC ping OK setting EWloco");
+              preferences.end();
+            } else logTo::logToAll("cannot reach DCC");
+#endif
           }
         }
-        for (s=0; s<NUM_SIGS; s++) {
-          if (signals[s].location == N || signals[s].location == S)
-            signals[s].loco = NSlocoID;
-          else
-            signals[s].loco = EWlocoID;
-        }
+        setSigLoco();
       }
       for (s=0; s<NUM_SIGS; s++) {
-        logTo::logToAll("signal:" + String(s) + " loco:" + String(signals[s].loco));
+        logTo::logToAll("signal:" + String(s) + " loco:" + String(signals[s].loco->getAddress()));
       }
       logTo::logToAll("NSloco: " + String(NSlocoID));
       logTo::logToAll("EWloco: " + String(EWlocoID));
+      return;
+    }
+#if 0
+    if (words[i].startsWith("cab")) {
+      if (!words[++i].isEmpty())
+        int cabNo = atoi(words[i].c_str());
+      for (int i=0; i<MAXLOC; i++) {
+        logTo::logToAll("cab: " + String(i) + " speed: " + String(cabDCC[i].speed));
+      }
+      return;
+    }
+#endif
+    if (words[i].startsWith("serial")) {
+      unsigned long startTime = millis();
+      String receivedString;
+      int timeout=60;
+      if (!words[++i].isEmpty())
+        int timeout = atoi(words[i].c_str());
+      if (timeout > 300) timeout = 300;
+      while (!Serial1.available()) {
+        unsigned long now = millis();
+        if (now - startTime > timeout*1000) {
+          // Handle timeout condition
+          logTo::logToAll("timed out waiting for status response from DCC-EX " + String(now) + "-" + String(startTime) + "=" + String(now-startTime) + " " + String(timeout));
+          break;
+        }
+        yield();
+      }
+      while (Serial1.available() > 0) {
+        receivedString = Serial1.readString();
+        logTo::logToAll("DCC rx: " + receivedString);
+      }
       return;
     }
     logTo::logToAll("Unknown command: " + words[i]);

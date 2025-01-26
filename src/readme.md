@@ -1,4 +1,4 @@
-# **Diamond Crossing Controller**
+# Diamond Crossing Controller
 
 This project implements an automated controller for a model railroad diamond crossing using an ESP32 microcontroller. It manages signals, track power, and train detection to safely control traffic through the crossing.
 
@@ -29,7 +29,7 @@ Clear - All signals yellow, trains may proceed
 Occupied - One train in crossing, signals set accordingly
 Clearing - Train exiting crossing, waiting for complete clearance
 
-## ### ## Signal Logic
+## Signal Logic
 Yellow signals indicate track is clear to proceed
 Green signal shows for train currently cleared through crossing
 Red signals stop opposing traffic
