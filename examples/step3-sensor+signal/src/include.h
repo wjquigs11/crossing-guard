@@ -1,27 +1,4 @@
-#include <Arduino.h>
-#include <WiFi.h>
-#include "SPIFFS.h"
-#include <ArduinoJson.h>
-#include <ESPmDNS.h>
-#include <ESPAsyncWebServer.h>
-#include <WebSerialPro.h>
-#include <ElegantOTA.h>
-#include <NTPClient.h>
-#include <ReactESP.h>
-#include <Preferences.h>
-#include <Arduino.h>
-#include <Time.h>
-#include <Wire.h>
-#include <SPI.h>
-#include <MovingAvg.h>
-#include <SparkFun_VL53L1X.h>
-#include <SparkFun_I2C_Mux_Arduino_Library.h>
-#include <DCCEXProtocol.h>
-#include <Adafruit_MCP23X17.h>
-#include "soc/soc.h"
-#include "soc/rtc_cntl_reg.h"
 
-#include "logto.h"
 
 extern AsyncWebServer server;
 extern bool serverStarted;
@@ -45,7 +22,7 @@ extern bool teleplot;
 extern bool logToSerial;
 
 #define LIGHT_CYCLES 10
-#define TRIGLEVEL 10 // trigger sensor if it drops to % of start value
+#define TRIGLEVEL 10 // % trigger sensor if it drops to % of start value
 #define MOVINGAVG 10
 #define CLEARDELAY 8  // seconds to wait after crossing is clear to reset signals
 #define LOOPDELAY 10 // (msecs) configurable in case trains move faster
@@ -75,14 +52,14 @@ typedef enum {
     Clear, Occupied, Clearing,
 } blocksigState;
 
-// sensors represent the TOF lasers in the track and their associated GPIOs (on the MCP)
+// sensors represent the photresistors in the track and their associated GPIOs for ESP32 ADCs
 struct Sensor {
     cDirection location; // e.g, located at W end of E/W track
     bool active;
     int initVal;
     int curVal;
     movingAvg avgVal; 
-    int sensIdx;    // Sensor[] isn't necessarly in same order as dSensor[]
+    int sensIdx;    // Sensor[] isn't necessarly in same order as irSensor[]
     int trigLevel {TRIGLEVEL};
     bool cursigState;
     bool prevsigState;
@@ -113,8 +90,6 @@ extern int trigSize;
 
 #define NUM_SIGS 4  // 4 signals on the diamond crossing
 #define NUM_LEDS 3  // each signal has 3 LEDs
-#define ON LOW
-#define OFF HIGH
 
 struct Signal {
     int GPIO[NUM_LEDS];
@@ -130,7 +105,7 @@ extern QWIICMUX myMux;
 // SF MUX i2c @ 0x70
 #define MUXMAX 7  // number of MUX ports
 // TOF sensors i2c @ 0x29
-extern SFEVL53L1X dSensor[MUXMAX];
+extern SFEVL53L1X irSensor[MUXMAX];
 extern bool sensorOn[MUXMAX];
 #define CROSSMAX 5  // MUX ports 0..4 are for crossing
 
@@ -226,7 +201,6 @@ void showTurnsigState();
 //#define branch false
 // i2c address for ESP32 turnout controller
 #define I2C_DEV_ADDR 0x55
-extern bool turnControlConnected;
 
 struct TurnoutQ {
     // define GPIOs to control a turnout
@@ -244,7 +218,7 @@ struct TurnoutQ {
 
 #define TURNOUTS 4
 extern TurnoutQ layout[];
-#define TRIGTIME 100 // msecs to run motor driver to throw turnout
+#define TRIGTIME 40 // msecs to run motor driver to throw turnout
 //#define TRIGTIME 10000
 extern int turnTime;
 extern bool loopMode;

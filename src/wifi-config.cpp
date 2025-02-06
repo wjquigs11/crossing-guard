@@ -38,7 +38,7 @@ String readFile(fs::FS &fs, const char * path){
 
   File file = fs.open(path);
   if(!file || file.isDirectory()){
-    logTo::logToAll("Failed to open file for reading: " + String(path));
+    logTo::All("Failed to open file for reading: " + String(path));
     return String();
   }
   
@@ -54,7 +54,7 @@ void writeWiFi(int priority, String ssidNew, String passwdNew) {
   ssid[priority] = ssidNew;
   File wifiFile = SPIFFS.open(wifiPath, FILE_WRITE);
   if(!wifiFile) {
-    logTo::logToAll("Failed to open file for writing: " + String(wifiPath));
+    logTo::All("Failed to open file for writing: " + String(wifiPath));
     return;
   }
   for (int i=0; i<MAX_NETS; i++) {  
@@ -72,7 +72,7 @@ void writeFile(fs::FS &fs, const char * path, const char * message){
 
   File file = fs.open(path, FILE_WRITE);
   if(!file){
-    logTo::logToAll("Failed to open file for writing: " + String(path));
+    logTo::All("Failed to open file for writing: " + String(path));
     return;
   }
   if(file.print(message)){
@@ -85,7 +85,7 @@ void writeFile(fs::FS &fs, const char * path, const char * message){
 bool readWiFi() {
   File file = SPIFFS.open(wifiPath);
   if(!file || file.isDirectory()) {
-    logTo::logToAll("failed to open wifi file for reading");
+    logTo::All("failed to open wifi file for reading");
     return false;
   }
   int i=0;
@@ -94,14 +94,14 @@ bool readWiFi() {
     pass[i] = file.readStringUntil(':');
     ip[i] = file.readStringUntil(':');
     gateway[i] = file.readStringUntil('\n');
-    logTo::logToAll("SSID " + ssid[i]);
-    logTo::logToAll("passwd " + pass[i]);
-    logTo::logToAll("IP " + ip[i]);
-    logTo::logToAll("gateway " + gateway[i]);
+    logTo::All("SSID " + ssid[i]);
+    logTo::All("passwd " + pass[i]);
+    logTo::All("IP " + ip[i]);
+    logTo::All("gateway " + gateway[i]);
     i++;
   }
   num_nets=i;
-  logTo::logToAll("found " + String(num_nets) + " networks");
+  logTo::All("found " + String(num_nets) + " networks");
   return true;
 }
 
@@ -111,23 +111,23 @@ bool initWiFi() {
   const int MAX_TRIES = 8;
 
   if (!readWiFi()) {
-    logTo::logToAll("Failed to read WiFi credentials");
+    logTo::All("Failed to read WiFi credentials");
     return false;
   }
   WiFi.mode(WIFI_STA);
   for (int i=0; i<num_nets; i++) {
-    logTo::logToAll("Found SSID: " + String(i) + " " + ssid[i]);
+    logTo::All("Found SSID: " + String(i) + " " + ssid[i]);
     if(ssid[i]=="") {
-      logTo::logToAll("Undefined SSID.");
+      logTo::All("Undefined SSID.");
       return false;
     }
     localIP.fromString(ip[i].c_str());
     localGateway.fromString(gateway[i].c_str());
     if (!WiFi.config(localIP, localGateway, subnet)) {
-      logTo::logToAll("STA Failed to configure");
+      logTo::All("STA Failed to configure");
       return false;
     }
-    logTo::logToAll("Connecting to WiFi " + ssid[i]);
+    logTo::All("Connecting to WiFi " + ssid[i]);
     WiFi.begin(ssid[i].c_str(), pass[i].c_str());
 
     unsigned long currentMillis = millis();
@@ -138,29 +138,29 @@ bool initWiFi() {
       //Serial.print(".");
       currentMillis = millis();
       if (currentMillis - previousMillis >= interval) {
-        logTo::logToAll("Failed to connect.");
+        logTo::All("Failed to connect.");
         //return false;
       }
     }
     num_tries = 0;
     if (WiFi.status() == WL_CONNECTED) {
-      logTo::logToAll("connected: " + WiFi.localIP().toString());      
+      logTo::All("connected: " + WiFi.localIP().toString());      
       if (!MDNS.begin(host.c_str()))
-        logTo::logToAll(F("Error starting MDNS responder"));
+        logTo::All(F("Error starting MDNS responder"));
       else {
-        logTo::logToAll("MDNS started " + host);
+        logTo::All("MDNS started " + host);
       }
       // Add service to MDNS-SD
       if (!MDNS.addService("http", "tcp", HTTP_PORT))
-        logTo::logToAll("MDNS add service failed");
+        logTo::All("MDNS add service failed");
 #ifdef MDNS
       int n = MDNS.queryService("http", "tcp");
       if (n == 0) {
-        logTo::logToAll("No services found");
+        logTo::All("No services found");
       } else {
         for (int i = 0; i < n; i++) {
-          logTo::logToAll("Service found: ");
-          logTo::logToAll(MDNS.hostname(i) + " (" + String(MDNS.IP(i)) + ":" + String(MDNS.port(i)) + ")\n");
+          logTo::All("Service found: ");
+          logTo::All(MDNS.hostname(i) + " (" + String(MDNS.IP(i)) + ":" + String(MDNS.port(i)) + ")\n");
         }
       }
 #endif
@@ -170,7 +170,7 @@ bool initWiFi() {
       while(!timeClient.update() && count++ < RETRIES) {
           //timeClient.forceUpdate();
       }
-      logTo::logToAll(timeClient.getFormattedDate());
+      logTo::All(timeClient.getFormattedDate());
 
       return true;
     }
@@ -180,12 +180,12 @@ bool initWiFi() {
 
 void startAP() {
     // Connect to Wi-Fi network with SSID and password
-    logTo::logToAll("Setting AP (Access Point)");
+    logTo::All("Setting AP (Access Point)");
     // NULL sets an open Access Point
     WiFi.softAP("ESP-WIFI-MANAGER", NULL);
 
     IPAddress IP = WiFi.softAPIP();
-    logTo::logToAll("AP IP address: " + IP.toString());
+    logTo::All("AP IP address: " + IP.toString());
 
     // Web Server Root URL
     server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){

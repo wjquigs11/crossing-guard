@@ -4,7 +4,7 @@
 
 class logTo {
 public:
-    static void All(String s);
+    static void logToAll(String s);
     logTo() {}
     static const int ASIZE = 20;
     static String commandList[ASIZE];

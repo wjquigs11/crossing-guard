@@ -17,7 +17,7 @@ String getSensorReadings() {
 }
 
 String processor(const String& var) {
-  logTo::logToAll("processor: " + var);
+  logTo::All("processor: " + var);
   if (var == "NSLOCO") {
     return String(NSlocoID);
   }
@@ -33,28 +33,28 @@ String processor(const String& var) {
 int proxTrig;  // temp
 
 void startWebServer() {
-  logTo::logToAll("starting web server");
+  logTo::All("starting web server");
 
   // start serving from SPIFFS
   server.serveStatic("/", SPIFFS, "/").setDefaultFile("index.html");
   //server.serveStatic("/", SPIFFS, "/");
 
   server.on("/", HTTP_GET, [](AsyncWebServerRequest * request) {
-    logTo::logToAll("index.html");
+    logTo::All("index.html");
     request->send(SPIFFS, "/index.html", "text/html", false, processor);
   });
 
   server.on("/crossing", HTTP_GET, [](AsyncWebServerRequest * request) {
-    logTo::logToAll("crossing.html");
+    logTo::All("crossing.html");
     request->send(SPIFFS, "/crossing.html", "text/html", false, processor);
   });
 
   server.on("/sensor", HTTP_GET, [](AsyncWebServerRequest * request) {
-    logTo::logToAll("sensor.html");
+    logTo::All("sensor.html");
     if (request->hasParam("prox")) {
       String prox = request->getParam("prox")->value();
       proxTrig = atoi(prox.c_str());
-      logTo::logToAll("proximity sensor " + prox);
+      logTo::All("proximity sensor " + prox);
       prox = String();
     }
     request->send(200, "text/plain", "prox");
@@ -64,7 +64,7 @@ void startWebServer() {
   server.on("/readings", HTTP_GET, [](AsyncWebServerRequest *request) {
     //logToAll("getSensorReadings\n");
     String json = getSensorReadings();
-    logTo::logToAll("readings: " + json);
+    logTo::All("readings: " + json);
     request->send(200, "application/json", json);
     json = String();
   });
@@ -72,27 +72,27 @@ void startWebServer() {
   server.on("/host", HTTP_GET, [](AsyncWebServerRequest *request) {
     String buf = "hostname: " + host;
     buf += "ESP local MAC addr: " + String(WiFi.macAddress() + "\n");
-    logTo::logToAll(buf);
+    logTo::All(buf);
     request->send(200, "text/plain", buf.c_str());
     buf = String();
   });
 
   server.on("/config", HTTP_GET, [](AsyncWebServerRequest *request) {
-    logTo::logToAll("config\n");
+    logTo::All("config\n");
     String response = "none";
     if (request->hasParam("hostname")) {
       Serial.printf("hostname %s\n", request->getParam("hostname")->value().c_str());
       host = request->getParam("hostname")->value();
       response = "change hostname to " + host + "\n";
-      logTo::logToAll(response);
+      logTo::All(response);
       preferences.putString("hostname",host);
-      logTo::logToAll("preferences " + preferences.getString("hostname", "unknown") + "\n");
+      logTo::All("preferences " + preferences.getString("hostname", "unknown") + "\n");
     } else if (request->hasParam("webtimer")) {
       WebTimerDelay = atoi(request->getParam("webtimer")->value().c_str());
       if (WebTimerDelay < 0) WebTimerDelay = DEFDELAY;
       if (WebTimerDelay > 10000) WebTimerDelay = 10000;
       response = "change web timer to " + String(WebTimerDelay);
-      logTo::logToAll(response);
+      logTo::All(response);
       preferences.putInt("timerdelay",WebTimerDelay); 
     }
     //request->send(SPIFFS, "/index.html", "text/html");
@@ -108,7 +108,7 @@ void startWebServer() {
       const AsyncWebParameter* p = request->getParam(i);
       if(p->isPost()) {
         // HTTP POST ssid value
-        logTo::logToAll("params POST " + p->name() + " " + p->value());
+        logTo::All("params POST " + p->name() + " " + p->value());
         if (p->name() == "northsouthloco") {
           NSlocoID = atoi(p->value().c_str());
           preferences.putInt("NSlocoID", NSlocoID);

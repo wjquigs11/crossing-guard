@@ -6,12 +6,14 @@ char prbuf[PRBUF];
 bool logToSerial = true;
 bool debugNMEA = false;
 
-void logTo::logToAll(String s) {
+void logTo::All(String s) {
   if (s.endsWith("\n")) s.remove(s.length() - 1);
   if (logToSerial) {
     Serial.println(s);
     //consLog.println(s);
   }
+  // to test serial connection to turnout controller
+  Serial2.println(s);
   if (serverStarted) {
     WebSerial.print(s);
     //WebSerial.flush();
@@ -99,19 +101,19 @@ void serialWrapper(String dataS) {
         preferences.begin("ESPprefs", false);
         host = words[i];
         preferences.putString("hostname", host);
-        logTo::logToAll("hostname set to " + host);
-        logTo::logToAll("restart to change hostname");
-        logTo::logToAll("preferences " + preferences.getString("hostname"));
+        logTo::All("hostname set to " + host);
+        logTo::All("restart to change hostname");
+        logTo::All("preferences " + preferences.getString("hostname"));
         preferences.end();
       } else {
-        logTo::logToAll("hostname: " + host + "\n");
+        logTo::All("hostname: " + host + "\n");
       }
       return;
     }
     if (words[i].equals("status")) {
       String buf = "";
       unsigned long uptime = millis() / 1000;
-      logTo::logToAll("uptime: " + String(uptime));
+      logTo::All("uptime: " + String(uptime));
       buf = String();
       return;
     }
@@ -120,18 +122,18 @@ void serialWrapper(String dataS) {
       buf += " wifi: " + WiFi.SSID();
       buf += " ip: " + WiFi.localIP().toString();
       buf += "  MAC addr: " + formatMacAddress(WiFi.macAddress());
-      logTo::logToAll(buf);
+      logTo::All(buf);
       buf = String();
       return;
     }
     if (words[i].startsWith("log")) {
       logToSerial = !logToSerial;
-      logTo::logToAll("log: " + String(logToSerial ? "on" : "off"));
+      logTo::All("log: " + String(logToSerial ? "on" : "off"));
       return;
     }
     if (words[i].startsWith("teleplot")) {
       teleplot = !teleplot;
-      logTo::logToAll("teleplot: " + String(teleplot ? "on" : "off"));
+      logTo::All("teleplot: " + String(teleplot ? "on" : "off"));
       return;
     }    
     if (words[i].startsWith("sens")) {
@@ -140,7 +142,7 @@ void serialWrapper(String dataS) {
         int j;
         String threshS = words[i];
         int thresh = atoi(threshS.c_str());
-        logTo::logToAll("setting light threshold to " + threshS + "%");
+        logTo::All("setting light threshold to " + threshS + "%");
         for (j=0; j < trigSize; j++)
           setTrigger(&sensors[j], thresh);
       }
@@ -150,7 +152,7 @@ void serialWrapper(String dataS) {
         if (!words[++i].isEmpty()) {
           String levelS = words[i];
           int level = atoi(levelS.c_str());
-          logTo::logToAll("setting sensor " + sensorS + " to threshold " + levelS);
+          logTo::All("setting sensor " + sensorS + " to threshold " + levelS);
           // now go do it
         }
 #endif
@@ -159,14 +161,14 @@ void serialWrapper(String dataS) {
     if (words[i].startsWith("stop")) {  // TBD change to DCC-EX
       if (!words[++i].isEmpty()) {
         if (words[i].startsWith("i")) {
-          logTo::logToAll("stopping inner loop");
+          logTo::All("stopping inner loop");
           digitalWrite(RELAYIN, HIGH);
         } else if (words[i].startsWith("o")) {
-          logTo::logToAll("stopping outer loop");
+          logTo::All("stopping outer loop");
           digitalWrite(RELAYOUT, HIGH);
         }
       } else {
-        logTo::logToAll("stopping both");
+        logTo::All("stopping both");
         digitalWrite(RELAYIN, HIGH);
         digitalWrite(RELAYOUT, HIGH);          
       }
@@ -175,14 +177,14 @@ void serialWrapper(String dataS) {
     if (words[i].startsWith("start")) {
       if (!words[++i].isEmpty()) {
         if (words[i].startsWith("i")) {
-          logTo::logToAll("starting inner loop");
+          logTo::All("starting inner loop");
           digitalWrite(RELAYIN, LOW);
         } else if (words[i].startsWith("o")) {
-          logTo::logToAll("starting outer loop");
+          logTo::All("starting outer loop");
           digitalWrite(RELAYOUT, LOW);
         }
       } else {
-        logTo::logToAll("starting both");
+        logTo::All("starting both");
         digitalWrite(RELAYIN, LOW);
         digitalWrite(RELAYOUT, LOW);
       }
@@ -193,8 +195,8 @@ void serialWrapper(String dataS) {
       i = digitalRead(RELAYIN);
       j = digitalRead(RELAYOUT);
       String statusS = enableRelays ? "enabled" : "disabled";
-      logTo::logToAll("relay status: " + statusS);
-      logTo::logToAll("inner/mountain loop: " + String(i) + " outer/flat loop: " + String(j));
+      logTo::All("relay status: " + statusS);
+      logTo::All("inner/mountain loop: " + String(i) + " outer/flat loop: " + String(j));
       return;
     }    
     if (words[i].startsWith("turn")) {
@@ -203,21 +205,22 @@ void serialWrapper(String dataS) {
         if (turn > 0) {
           if (!words[++i].isEmpty()) {
             if (words[i].startsWith("s")) {
-              logTo::logToAll("throw " + String(turn) + " straight");
-              throwWrapper(turn, true);
+              logTo::All("throw " + String(turn) + " straight");
+              throwTurnout(turn, true);
             } else if (words[i].startsWith("r")) {
-              logTo::logToAll("throw " + String(turn) + " reverse");
-              throwWrapper(turn, false);
+              logTo::All("throw " + String(turn) + " branch");
+              throwTurnout(turn, false);
             }
           }
         }
       } else {
-        for (int j=0; j<TURNOUTS; j++) {
-          logTo::logToAll("turnout: " + String(j+1) + " state:" + ((layout[j].state ? "straight" : "reverse")));
-        }
+        // right now I haven't figured out how to give diamond-main access to turnout state.
+        // perhaps via response from throwturn()
+        //showTurnsigState();
       }
       return;
     }
+#if 0
     if (words[i].startsWith("trig")) {
       if (!words[++i].isEmpty()) {
         int trigtime = atoi(words[i].c_str());
@@ -225,9 +228,10 @@ void serialWrapper(String dataS) {
         if (trigtime < 0) trigtime = 1;
         turnTime = trigtime;
       }
-      logTo::logToAll("turnout trigger time: " + String(turnTime));
+      logTo::All("turnout trigger time: " + String(turnTime));
       return;
     }
+#endif
     if (words[i].startsWith("loop")) {
       if (!words[++i].isEmpty()) {
         if (words[i].startsWith("on"))
@@ -235,7 +239,7 @@ void serialWrapper(String dataS) {
         else if (words[i].startsWith("off"))
           loopMode = false;
       }
-      logTo::logToAll("loop mode: " + String(loopMode));
+      logTo::All("loop mode: " + String(loopMode));
       return;
     }
     if (words[i].startsWith("cali")) {
@@ -243,9 +247,9 @@ void serialWrapper(String dataS) {
       return;
     }
     if (words[i].startsWith("state")) {
-      logTo::logToAll("signals: ");
-      printSigState();
-      logTo::logToAll("crossing: " + printCrossState(crossState));
+      logTo::All("signals: ");
+      printSigsigState();
+      logTo::All("crossing: " + printCrosssigState(crosssigState));
       return;
     }
     if (words[i].startsWith("<")) {
@@ -259,7 +263,7 @@ void serialWrapper(String dataS) {
       if (!words[++i].isEmpty()) {
         int loco = atoi(words[i].c_str());
         int speed = getSpeed(loco,1000);
-        logTo::logToAll("loco " + String(loco) + " speed is " + String(speed));
+        logTo::All("loco " + String(loco) + " speed is " + String(speed));
       }
       return;
     }
@@ -288,7 +292,7 @@ void serialWrapper(String dataS) {
         if (signals[i].state != Y)
           setLED(i,Y);
       }
-      crossState = Clear;
+      crosssigState = Clear;
       return;
     }
     if (words[i].startsWith("loco")) {
@@ -300,14 +304,14 @@ void serialWrapper(String dataS) {
 #if 0
             if (int speed = getSpeed(loco,10000) >= 0) {
               // don't set loco if we can't talk to DCC
-              logTo::logToAll("loco " + String(loco) + " speed is " + String(speed));
+              logTo::All("loco " + String(loco) + " speed is " + String(speed));
               NSlocoID = loco;
               preferences.begin("ESPprefs", false);
               preferences.putInt("NSlocoID", NSlocoID);
               preferences.putUInt("ns-loco", NSlocoID);
-              logTo::logToAll("DCC ping OK setting NSloco");
+              logTo::All("DCC ping OK setting NSloco");
               preferences.end();
-            } else logTo::logToAll("cannot reach DCC");
+            } else logTo::All("cannot reach DCC");
 #endif
           }
         } else if (words[i].startsWith("ew")) {
@@ -315,25 +319,25 @@ void serialWrapper(String dataS) {
             int loco = atoi(words[i].c_str());
 #if 0
             if (int speed = getSpeed(loco,10000) >= 0) {
-              logTo::logToAll("loco " + String(loco) + " speed is " + String(speed));
+              logTo::All("loco " + String(loco) + " speed is " + String(speed));
               // don't set loco if we can't talk to DCC
               EWlocoID = loco;
               preferences.begin("ESPprefs", false);
               preferences.putInt("EWlocoID", EWlocoID);
               preferences.putUInt("ew-loco", EWlocoID);
-              logTo::logToAll("DCC ping OK setting EWloco");
+              logTo::All("DCC ping OK setting EWloco");
               preferences.end();
-            } else logTo::logToAll("cannot reach DCC");
+            } else logTo::All("cannot reach DCC");
 #endif
           }
         }
         setSigLoco();
       }
       for (s=0; s<NUM_SIGS; s++) {
-        logTo::logToAll("signal:" + String(s) + " loco:" + String(signals[s].loco->getAddress()));
+        logTo::All("signal:" + String(s) + " loco:" + String(signals[s].loco->getAddress()));
       }
-      logTo::logToAll("NSloco: " + String(NSlocoID));
-      logTo::logToAll("EWloco: " + String(EWlocoID));
+      logTo::All("NSloco: " + String(NSlocoID));
+      logTo::All("EWloco: " + String(EWlocoID));
       return;
     }
 #if 0
@@ -341,7 +345,7 @@ void serialWrapper(String dataS) {
       if (!words[++i].isEmpty())
         int cabNo = atoi(words[i].c_str());
       for (int i=0; i<MAXLOC; i++) {
-        logTo::logToAll("cab: " + String(i) + " speed: " + String(cabDCC[i].speed));
+        logTo::All("cab: " + String(i) + " speed: " + String(cabDCC[i].speed));
       }
       return;
     }
@@ -357,18 +361,18 @@ void serialWrapper(String dataS) {
         unsigned long now = millis();
         if (now - startTime > timeout*1000) {
           // Handle timeout condition
-          logTo::logToAll("timed out waiting for status response from DCC-EX " + String(now) + "-" + String(startTime) + "=" + String(now-startTime) + " " + String(timeout));
+          logTo::All("timed out waiting for status response from DCC-EX " + String(now) + "-" + String(startTime) + "=" + String(now-startTime) + " " + String(timeout));
           break;
         }
         yield();
       }
       while (Serial1.available() > 0) {
         receivedString = Serial1.readString();
-        logTo::logToAll("DCC rx: " + receivedString);
+        logTo::All("DCC rx: " + receivedString);
       }
       return;
     }
-    logTo::logToAll("Unknown command: " + words[i]);
+    logTo::All("Unknown command: " + words[i]);
   }
   for (int i=0; i<wordCount; i++) words[i] = String();
   dataS = String();
