@@ -50,7 +50,7 @@ void printRoster() {
     logTo::All("print roster");
     for (Loco *loco = dccexProtocol.roster->getFirst(); loco; loco = loco->getNext()) {
         int id = loco->getAddress();
-        char *name = loco->getName();
+        const char *name = loco->getName();
         CONSOLE.print(id);
         CONSOLE.print(" ~");
         CONSOLE.print(name);

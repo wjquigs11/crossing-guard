@@ -2,20 +2,11 @@
 
 This project implements an automated controller for a model railroad diamond crossing using an ESP32 microcontroller. It manages signals, track power, and train detection to safely control traffic through the crossing.
 
-## Features
-- Automated signal control for diamond crossing
-- Support for both DC and DCC locomotive control
-- IR sensor-based train detection
-- Configurable track power control via relays
-- WiFi connectivity with OTA updates
-- Web-based monitoring and configuration
-- Integration with DCC-EX command station
-- Hardware Requirements
-- ESP32 development board
-- IR distance sensors for train detection
-- LED signals (Red/Yellow/Green)
-- Relay modules for track power control
-- Multiplexer for sensor inputs
+The MCU is connected to 5 VL53L1X distance sensors embedded in the track. When a train passes over the sensor, the reading (compared to a moving average) drops. There is a simple state machine for the crossing. All 4 signals start at yellow. When a train enters the zone near the crossing, its sensor goes to green and all others go to red. If a train passes a sensor and its corresponding signal is red, the system triggers a relay to cut power to the second train's section of track. If either train is using DCC instead of DC, the system instead sends a "speed 0" command to the second train. When the first train passes over the sensor on the other side of the crossing, the crossing enters the "clearing" state. When the second sensor detects no more train, the crossing enters the "clear" state and the second train can proceed.
+
+The crossing has 4 directions, but one direction immediately splits into two tracks, hence the need for 5 sensors. Since each of the 4 signals has 3 LEDs, I consume a lot of GPIOs, so I'm using a Sparkfun I2C Mux and Adafruit MCP23017 GPIO expander to get enough pins.
+
+TBD: the diamond crossing MCU forwards sensor triggers to another MCU ("turnout") to automatically switch tracks, depending on the location of the trains. It's a work in progress.
 
 ## Configuration
 The system uses ESP32's preferences to store:
@@ -52,7 +43,7 @@ Web interface available for monitoring and configuration commands:
 format - Format the SPIFFS filesystem
 restart - Restart the ESP32
 ls - List files in SPIFFS storage
-scan - Scan I2C bus (currently commented out)
+scan - Scan I2C bus
 status - Show uptime and system status
 ### Configuration Commands
 hostname [name] - Get or set device hostname
@@ -85,7 +76,4 @@ Configure hardware connections according to pin definitions
 Set up WiFi credentials
 Configure DCC-EX command station if using DCC
 Upload code to ESP32
-Perform initial sensor calibration
-
-The system will automatically manage crossing traffic once configured and calibrated.
 

@@ -10,10 +10,9 @@
 #include <ReactESP.h>
 #include <Preferences.h>
 #include <Arduino.h>
-#include <Time.h>
 #include <Wire.h>
 #include <SPI.h>
-#include <MovingAvg.h>
+#include <movingAvg.h>
 #include <SparkFun_VL53L1X.h>
 #include <SparkFun_I2C_Mux_Arduino_Library.h>
 #include <DCCEXProtocol.h>
